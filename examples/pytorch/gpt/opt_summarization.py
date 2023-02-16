@@ -60,6 +60,11 @@ def main():
              ' 0: No quantization. All computation in data_type'
              ' 1: Quantize weights to int8, all compute occurs in fp16/bf16. Not supported when data_type is fp32')
     parser.add_argument(
+        '--int8_mode_gptq', type=int, default=0, choices=[0, 1],
+        help='The level of quantization to perform, specific for gptq algorithm.'
+             ' 0: No quantization. All computation in data_type'
+             ' 1: Quantize weights to int8, all compute occurs in fp16/bf16. Not supported when data_type is fp32')
+    parser.add_argument(
         '--use_gpt_decoder_ops', action='store_true',
         help='Use separate decoder FT operators instead of end-to-end model op.')
     parser.add_argument(
@@ -123,10 +128,13 @@ def main():
     pipeline_para_size = args.pipeline_para_size
     lib_path = args.lib_path
     ckpt_path = os.path.join(ft_model_location, f'{tensor_para_size}-gpu')
+    if args.int8_mode_gptq:
+        ckpt_path += "-gptq"
 
     print(f"top_k: {top_k}")
     print(f"top_p: {top_p}")
     print(f"int8_mode: {args.int8_mode}")
+    print(f"int8_mode_gptq: {args.int8_mode_gptq}")
     print(f"temperature: {temperature}")
     print(f"max_seq_len: {max_seq_len}")
     print(f"max_batch_size: {max_batch_size}")
@@ -156,7 +164,8 @@ def main():
                           activation_type=activation_type,
                           has_post_decoder_layernorm=has_post_decoder_layernorm,
                           int8_mode=args.int8_mode,
-                          weights_data_type=args.weights_data_type)
+                          weights_data_type=args.weights_data_type,
+                          int8_mode_gptq=args.int8_mode_gptq)
         if not gpt.load(ckpt_path=ckpt_path):
             print("[WARNING] Checkpoint file not found. Model loading is skipped.")
     else:

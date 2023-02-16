@@ -56,6 +56,11 @@ void symmetric_quantize(int8_t*                    processed_quantized_weight,
                         const std::vector<size_t>& shape,
                         QuantType                  quant_type);
 
+void symmetric_quantize_preprocess(int8_t*                    processed_quantized_weight,
+                        int8_t*                    unprocessed_quantized_weight,
+                        const std::vector<size_t>& shape,
+                        QuantType                  quant_type);
+
 // This is exposed so that we can write tests that use the processed weights for CUTLASS but the unprocessed weight
 // to implement a simple reference implementation.
 template<typename ComputeType, typename WeightType>

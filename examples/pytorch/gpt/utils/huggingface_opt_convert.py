@@ -18,6 +18,8 @@ Convert huggingface Meta OPT model. Use https://huggingface.co/facebook/opt-125m
 
 import argparse
 import configparser
+from curses import KEY_SCANCEL
+import json
 import multiprocessing
 import numpy as np
 import os
@@ -75,7 +77,8 @@ def split_and_convert_process(i, saved_dir, factor, key, args, val, capture_dict
     if "input_layernorm.weight" in key or "input_layernorm.bias" in key or \
         "attention.dense.bias" in key or "post_attention_layernorm.weight" in key or \
         "post_attention_layernorm.bias" in key or "mlp.dense_4h_to_h.bias" in key or \
-        "final_layernorm.weight" in key or "final_layernorm.bias" in key:
+        "final_layernorm.weight" in key or "final_layernorm.bias" in key or \
+        "mlp.dense_4h_to_h.scale" in key or "attention.dense.scale" in key:
 
         # shared weights, only need to convert the weights of rank 0
         if i == 0:
@@ -97,7 +100,7 @@ def split_and_convert_process(i, saved_dir, factor, key, args, val, capture_dict
         for j in range(factor):
             save_val(split_vals[j], key, i * factor + j)
 
-    elif "mlp.dense_h_to_4h.weight" in key or "mlp.dense_h_to_4h.bias" in key:
+    elif "mlp.dense_h_to_4h.weight" in key or "mlp.dense_h_to_4h.bias" in key or "mlp.dense_h_to_4h.scale" in key:
         if quantized_out and "weight" in key:
             val_q, weight_scales, act_scale_pre, act_scale_post = quantize(val, capture_dict[old_name])
             save_val(act_scale_pre.astype(dtype), key.replace("weight", "scale"))
@@ -113,7 +116,7 @@ def split_and_convert_process(i, saved_dir, factor, key, args, val, capture_dict
         for j in range(factor):
             save_val(split_vals[j], key, i * factor + j)
 
-    elif "attention.query_key_value.bias" in key:
+    elif "attention.query_key_value.bias" in key or "attention.query_key_value.scale" in key:
         local_dim = (int)(val.shape[-1] / 3)
 
         val = val.reshape(3, local_dim)
@@ -154,7 +157,7 @@ def fuse_qkv_weight(q, k, v):
     return qkv
 
 def split_and_convert(args):
-    saved_dir = args.saved_dir + "/%d-gpu/" % args.infer_gpu_num
+    saved_dir = args.saved_dir + "/%d-gpu-gptq/" % args.infer_gpu_num
 
     if(os.path.exists(saved_dir) == False):
         os.makedirs(saved_dir)
@@ -168,8 +171,14 @@ def split_and_convert(args):
 
     factor = (int)(i_gpu_num / t_gpu_num)
 
+    model_and_quant_factors = torch.load(args.in_file)
+    model_named_parameters_iter = model_and_quant_factors['model']
+    quant_factors = model_and_quant_factors['quant_factors']
+    f = open(args.in_config)
+    hf_config = json.load(f)
+
     # load position_embedding from rank 0
-    model = AutoModelForCausalLM.from_pretrained(args.in_file, device_map="auto")
+    # model = AutoModelForCausalLM.from_pretrained(args.in_file, device_map="auto")
 
     capture_dict = None
     if args.act_scale is not None:
@@ -177,11 +186,11 @@ def split_and_convert(args):
         for key, values in torch.load(args.act_scale).items():
             capture_dict[key + ".weight"] = (values["input"], values["output"])
 
-    hf_config = vars(model.config)
+    # hf_config = vars(model.config)
 
     num_layers = hf_config["num_hidden_layers"]
 
-    layer_names = [name for name, param in model.named_parameters()]
+    layer_names = model_named_parameters_iter.keys()
 
     # NOTE: save parameters to config files (loaded by triton backends)
     config = configparser.ConfigParser()
@@ -224,6 +233,11 @@ def split_and_convert(args):
         "fc1.weight",
         "fc2.bias",
         "fc2.weight",
+        # scale related
+        "self_attn.qkv_proj.scale",
+        "self_attn.out_proj.scale",
+        "fc1.scale",
+        "fc2.scale"
     ]
 
     ft_model_name_pattern = [
@@ -239,11 +253,16 @@ def split_and_convert(args):
         "mlp.dense_h_to_4h.weight",
         "mlp.dense_4h_to_h.bias",
         "mlp.dense_4h_to_h.weight",
+        # scale related
+        "attention.query_key_value.scale",
+        "attention.dense.scale",
+        "mlp.dense_h_to_4h.scale",
+        "mlp.dense_4h_to_h.scale",
     ]
 
-    model_named_parameters_iter =  model.named_parameters()
+    # model_named_parameters_iter =  model.named_parameters()
     model_named_parameters = dict()
-    for name, param in model_named_parameters_iter:
+    for name, param in model_named_parameters_iter.items():
         if "embed" in name:
             model_named_parameters[name] = param
         elif "project_in" in name:
@@ -261,6 +280,16 @@ def split_and_convert(args):
         q_bias = model_named_parameters[prefix + 'q_proj.bias']
         k_bias = model_named_parameters[prefix + 'k_proj.bias']
         v_bias = model_named_parameters[prefix + 'v_proj.bias']
+        # scale related
+        q_scale = quant_factors[prefix + 'q_proj']['scale'].flatten()
+        k_scale = quant_factors[prefix + 'k_proj']['scale'].flatten()
+        v_scale = quant_factors[prefix + 'v_proj']['scale'].flatten()
+        qkv_scale = fuse_qkv_weight(q_scale, k_scale, v_scale)
+        model_named_parameters[prefix + 'qkv_proj.scale'] = qkv_scale
+        model_named_parameters[prefix + 'out_proj.scale'] = quant_factors[prefix + 'out_proj']['scale'].flatten()
+        model_named_parameters[f'model.decoder.layers.{l}.' + 'fc1.scale'] = quant_factors[f'model.decoder.layers.{l}.' + 'fc1']['scale'].flatten()
+        model_named_parameters[f'model.decoder.layers.{l}.' + 'fc2.scale'] = quant_factors[f'model.decoder.layers.{l}.' + 'fc2']['scale'].flatten()
+
         qkv_weight = fuse_qkv_weight(q_weight, k_weight, v_weight)
         qkv_bias = fuse_qkv_weight(q_bias, k_bias, v_bias)
         if save_int8:
@@ -299,7 +328,8 @@ def split_and_convert(args):
                     new_name = name.replace("model.decoder.layers.", "layers.").replace(huggingface_model_name_pattern[i], ft_model_name_pattern[i])
 
                     starmap_args.append((0, saved_dir, factor, new_name, args,
-                                        param.detach().cpu().numpy().astype(np_weight_data_type),
+                                        # param.detach().cpu().numpy().astype(np_weight_data_type),
+                                        param.detach().cpu().numpy(),
                                         capture_dict, name, np_weight_data_type))
             pool.starmap_async(split_and_convert_process, starmap_args)
     pool.close()
@@ -317,6 +347,7 @@ if __name__ == "__main__":
     parser.add_argument("-processes", "-p", type=int, help="How many processes to spawn for conversion (default: 4)", default=4)
     parser.add_argument("-weight_data_type", type=str, default="fp32", choices=["fp32", "fp16"])
     parser.add_argument("-act_scale", default=None, help="path to activation scalings for int8 conversion")
+    parser.add_argument("-in_config", default=None, help="model config")
 
     args = parser.parse_args()
     print("\n=============== Argument ===============")

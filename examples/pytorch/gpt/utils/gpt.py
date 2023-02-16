@@ -23,8 +23,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-str_type_map = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
-
+str_type_map = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16, "int8": torch.int8}
 
 class GPTWeights:
     def __init__(self, head_num, size_per_head, layer_num, vocab_size, max_seq_len, tensor_para_size, pipeline_para_size,
@@ -37,7 +36,8 @@ class GPTWeights:
                  has_pre_decoder_layernorm: bool = False,
                  has_post_decoder_layernorm: bool = True,
                  int8_mode: int = 0,
-                 inter_size: int = 0):
+                 inter_size: int = 0,
+                 int8_mode_gptq: int = 0):
         assert(head_num % tensor_para_size == 0)
 
         if int8_mode == 1:
@@ -81,6 +81,7 @@ class GPTWeights:
         self.local_inter_size = local_inter_size
 
         self.int8_mode = int8_mode
+        self.int8_mode_gptq = int8_mode_gptq
         self.share_embed = False
 
         if isinstance(weights_data_type, str):
@@ -268,47 +269,84 @@ class GPTWeights:
         def is_load(i): return i >= self.layers_per_device * \
             pipeline_para_rank and i < self.layers_per_device * (pipeline_para_rank + 1)
 
-        def load_to_torch(file_path: str, is_load: bool):
+        def load_to_torch(file_path: str, is_load: bool, is_int8_weight: bool = False, is_scale: bool = False, is_layer_norm: bool = False):
+            inference_data_type = self.inference_data_type
+            if self.int8_mode_gptq and is_int8_weight:
+                load_data_type = np.int8
+                inference_data_type = "int8"
+            elif is_scale:
+                load_data_type = np.float32
+                inference_data_type = "fp16"
+            elif is_layer_norm:
+                load_data_type = np.float16
+                inference_data_type = "fp16"
+            else:
+                load_data_type = self.weights_data_type
             if is_load:
-                return torch.from_numpy(np.fromfile(file_path, dtype=self.weights_data_type)).to(str_type_map[self.inference_data_type])
+                return torch.from_numpy(np.fromfile(file_path, dtype=load_data_type)).to(str_type_map[inference_data_type])
             else:
                 return torch.empty(0).to(str_type_map[self.inference_data_type])
-        w.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.input_layernorm.weight.bin", is_load(i))
+
+        if self.int8_mode and self.int8_mode_gptq:
+            # load scale
+            for i in range(self.layer_num):
+                self.scale[i + 0 * self.layer_num] = load_to_torch(f"{ckpt_path}/model.layers.{i}.attention.query_key_value.scale.{tp_rank}.bin", is_load(i), False, True)
+                self.scale[i + 1 * self.layer_num] = load_to_torch(f"{ckpt_path}/model.layers.{i}.attention.dense.scale.bin", is_load(i), False, True)
+                self.scale[i + 2 * self.layer_num] = load_to_torch(f"{ckpt_path}/model.layers.{i}.mlp.dense_h_to_4h.scale.{tp_rank}.bin", is_load(i), False, True)
+                self.scale[i + 3 * self.layer_num] = load_to_torch(f"{ckpt_path}/model.layers.{i}.mlp.dense_4h_to_h.scale.bin", is_load(i), False, True)
+            
+            """
+            self.scale.extend([load_to_torch(
+                f"{ckpt_path}/model.layers.{i}.attention.query_key_value.scale.{tp_rank}.bin", is_load(i), False, True) for i in range(self.layer_num)])
+            self.scale.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.attention.dense.scale.{tp_rank}.bin", is_load(i), False, True) for i in range(self.layer_num)])
+            self.scale.extend([load_to_torch(
+                f"{ckpt_path}/model.layers.{i}.mlp.dense_h_to_4h.scale.{tp_rank}.bin" \
+                    if os.path.isfile(f"{ckpt_path}/model.layers.{i}.mlp.dense_h_to_4h.scale.{tp_rank}.bin") \
+                        else f"{ckpt_path}/model.layers.{i}.mlp.moe.experts.dense_h_to_4h.scale.{tp_rank}.bin",
+                is_load(i), False, True) for i in range(self.layer_num)])
+            self.scale.extend([load_to_torch(
+                f"{ckpt_path}/model.layers.{i}.mlp.dense_4h_to_h.scale.{tp_rank}.bin" \
+                    if os.path.isfile(f"{ckpt_path}/model.layers.{i}.mlp.dense_4h_to_h.scale.{tp_rank}.bin") \
+                        else f"{ckpt_path}/model.layers.{i}.mlp.moe.experts.dense_4h_to_h.scale.{tp_rank}.bin",
+                is_load(i), False, True) for i in range(self.layer_num)])
+            """
+
+        w.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.input_layernorm.weight.bin", is_load(i), False, False, True)
                  for i in range(self.layer_num)])
-        w.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.input_layernorm.bias.bin", is_load(i))
+        w.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.input_layernorm.bias.bin", is_load(i), False, False, True)
                  for i in range(self.layer_num)])
         w.extend([load_to_torch(
-            f"{ckpt_path}/model.layers.{i}.attention.query_key_value.weight.{tp_rank}.bin", is_load(i)) for i in range(self.layer_num)])
+            f"{ckpt_path}/model.layers.{i}.attention.query_key_value.weight.{tp_rank}.bin", is_load(i), True) for i in range(self.layer_num)])
         w.extend([load_to_torch(
-            f"{ckpt_path}/model.layers.{i}.attention.query_key_value.bias.{tp_rank}.bin", is_load(i)) for i in range(self.layer_num)])
+            f"{ckpt_path}/model.layers.{i}.attention.query_key_value.bias.{tp_rank}.bin", is_load(i), False, False, True) for i in range(self.layer_num)])
         w.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.attention.dense.weight.{tp_rank}.bin",
-                 is_load(i)) for i in range(self.layer_num)])
-        w.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.attention.dense.bias.bin", is_load(i))
+                 is_load(i), True) for i in range(self.layer_num)])
+        w.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.attention.dense.bias.bin", is_load(i), False, False, True)
                  for i in range(self.layer_num)])
         w.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.post_attention_layernorm.weight.bin",
-                 is_load(i)) for i in range(self.layer_num)])
+                 is_load(i), False, False, True) for i in range(self.layer_num)])
         w.extend([load_to_torch(f"{ckpt_path}/model.layers.{i}.post_attention_layernorm.bias.bin",
-                 is_load(i)) for i in range(self.layer_num)])
+                 is_load(i), False, False, True) for i in range(self.layer_num)])
         w.extend([load_to_torch(
                 f"{ckpt_path}/model.layers.{i}.mlp.dense_h_to_4h.weight.{tp_rank}.bin" \
                     if os.path.isfile(f"{ckpt_path}/model.layers.{i}.mlp.dense_h_to_4h.weight.{tp_rank}.bin") \
                         else f"{ckpt_path}/model.layers.{i}.mlp.moe.experts.dense_h_to_4h.weight.{tp_rank}.bin",
-                is_load(i)) for i in range(self.layer_num)])
+                is_load(i), True) for i in range(self.layer_num)])
         w.extend([load_to_torch(
                 f"{ckpt_path}/model.layers.{i}.mlp.dense_h_to_4h.bias.{tp_rank}.bin" \
                     if os.path.isfile(f"{ckpt_path}/model.layers.{i}.mlp.dense_h_to_4h.bias.{tp_rank}.bin") \
                         else f"{ckpt_path}/model.layers.{i}.mlp.moe.experts.dense_h_to_4h.bias.{tp_rank}.bin",
-                is_load(i)) for i in range(self.layer_num)])
+                is_load(i), False, False, True) for i in range(self.layer_num)])
         w.extend([load_to_torch(
                 f"{ckpt_path}/model.layers.{i}.mlp.dense_4h_to_h.weight.{tp_rank}.bin" \
                     if os.path.isfile(f"{ckpt_path}/model.layers.{i}.mlp.dense_4h_to_h.weight.{tp_rank}.bin") \
                         else f"{ckpt_path}/model.layers.{i}.mlp.moe.experts.dense_4h_to_h.weight.{tp_rank}.bin",
-                is_load(i)) for i in range(self.layer_num)])
+                is_load(i), True) for i in range(self.layer_num)])
         w.extend([load_to_torch(
                 f"{ckpt_path}/model.layers.{i}.mlp.dense_4h_to_h.bias.bin" \
                     if os.path.isfile(f"{ckpt_path}/model.layers.{i}.mlp.dense_4h_to_h.bias.bin") \
                         else f"{ckpt_path}/model.layers.{i}.mlp.moe.experts.dense_4h_to_h.bias.bin",
-                is_load(i)) for i in range(self.layer_num)])
+                is_load(i), False, False, True) for i in range(self.layer_num)])
 
         if self.has_pre_decoder_layernorm:
             w.append(load_to_torch(f"{ckpt_path}/model.pre_decoder_layernorm.weight.bin", True))
@@ -402,39 +440,72 @@ class GPTWeights:
         # transpose calibrate quantize the kernel
         layer_num = self.layer_num
         if self.int8_mode != 0:
-            for i in range(layer_num):
-                self.int8_w[i + 0 * layer_num], self.scale[i + 0 *
-                                                           layer_num] = self.weight_transpose_calibrate_quantize(self.w[2 * layer_num + i])
-                self.int8_w[i + 1 * layer_num], self.scale[i + 1 *
-                                                           layer_num] = self.weight_transpose_calibrate_quantize(self.w[4 * layer_num + i])
-                self.int8_w[i + 2 * layer_num], self.scale[i + 2 *
-                                                           layer_num] = self.weight_transpose_calibrate_quantize(self.w[8 * layer_num + i])
-                self.int8_w[i + 3 * layer_num], self.scale[i + 3 *
-                                                           layer_num] = self.weight_transpose_calibrate_quantize(self.w[10 * layer_num + i])
+            if self.int8_mode_gptq == 0:
+                for i in range(layer_num):
+                    self.int8_w[i + 0 * layer_num], self.scale[i + 0 *
+                                                            layer_num] = self.weight_transpose_calibrate_quantize(self.w[2 * layer_num + i])
+                    self.int8_w[i + 1 * layer_num], self.scale[i + 1 *
+                                                            layer_num] = self.weight_transpose_calibrate_quantize(self.w[4 * layer_num + i])
+                    self.int8_w[i + 2 * layer_num], self.scale[i + 2 *
+                                                            layer_num] = self.weight_transpose_calibrate_quantize(self.w[8 * layer_num + i])
+                    self.int8_w[i + 3 * layer_num], self.scale[i + 3 *
+                                                            layer_num] = self.weight_transpose_calibrate_quantize(self.w[10 * layer_num + i])
 
-                # We clear the original weights since they are no longer needed
-                if self.int8_mode == 1:
-                    self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                    self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                    self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                    self.w[10 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-
-                if self.has_adapters:
-                    self.int8_w[i + 4 * layer_num], self.scale[i + 4 * layer_num] = self.weight_transpose_calibrate_quantize(
-                        self.w[12 * layer_num + i + self.adapter_offset])
-                    self.int8_w[i + 5 * layer_num], self.scale[i + 5 * layer_num] = self.weight_transpose_calibrate_quantize(
-                        self.w[14 * layer_num + i + self.adapter_offset])
-                    self.int8_w[i + 6 * layer_num], self.scale[i + 6 * layer_num] = self.weight_transpose_calibrate_quantize(
-                        self.w[16 * layer_num + i + self.adapter_offset])
-                    self.int8_w[i + 7 * layer_num], self.scale[i + 7 * layer_num] = self.weight_transpose_calibrate_quantize(
-                        self.w[18 * layer_num + i + self.adapter_offset])
-
-                    # Similar to above:
+                    # We clear the original weights since they are no longer needed
                     if self.int8_mode == 1:
-                        self.w[12 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                        self.w[14 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                        self.w[16 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                        self.w[18 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[10 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+
+                    if self.has_adapters:
+                        self.int8_w[i + 4 * layer_num], self.scale[i + 4 * layer_num] = self.weight_transpose_calibrate_quantize(
+                            self.w[12 * layer_num + i + self.adapter_offset])
+                        self.int8_w[i + 5 * layer_num], self.scale[i + 5 * layer_num] = self.weight_transpose_calibrate_quantize(
+                            self.w[14 * layer_num + i + self.adapter_offset])
+                        self.int8_w[i + 6 * layer_num], self.scale[i + 6 * layer_num] = self.weight_transpose_calibrate_quantize(
+                            self.w[16 * layer_num + i + self.adapter_offset])
+                        self.int8_w[i + 7 * layer_num], self.scale[i + 7 * layer_num] = self.weight_transpose_calibrate_quantize(
+                            self.w[18 * layer_num + i + self.adapter_offset])
+
+                        # Similar to above:
+                        if self.int8_mode == 1:
+                            self.w[12 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                            self.w[14 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                            self.w[16 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                            self.w[18 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+            else:
+                for i in range(layer_num):
+                    # quantize compatible
+                    quant_preprocess = torch.ops.fastertransformer.symmetric_quantize_last_axis_of_batched_matrix_preprocess
+                    self.int8_w[i + 0 * layer_num] = quant_preprocess(self.w[2 * layer_num + i], torch.int8)
+                    self.int8_w[i + 1 * layer_num] = quant_preprocess(self.w[4 * layer_num + i], torch.int8)
+                    self.int8_w[i + 2 * layer_num] = quant_preprocess(self.w[8 * layer_num + i], torch.int8)
+                    self.int8_w[i + 3 * layer_num] = quant_preprocess(self.w[10 * layer_num + i], torch.int8)
+
+                    # import ipdb; ipdb.set_trace()
+
+                    # We clear the original weights since they are no longer needed
+                    if self.int8_mode == 1:
+                        self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[10 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                    # import ipdb; ipdb.set_trace()
+
+                    if self.has_adapters:
+                        self.int8_w[i + 4 * layer_num] = self.w[12 * layer_num + i + self.adapter_offset]
+                        self.int8_w[i + 5 * layer_num] = self.w[14 * layer_num + i + self.adapter_offset]
+                        self.int8_w[i + 6 * layer_num] = self.w[16 * layer_num + i + self.adapter_offset]
+                        self.int8_w[i + 7 * layer_num] = self.w[18 * layer_num + i + self.adapter_offset]
+
+                        # Similar to above:
+                        if self.int8_mode == 1:
+                            self.w[12 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                            self.w[14 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                            self.w[16 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                            self.w[18 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+
         return True
 
 
@@ -464,6 +535,7 @@ class GPT(nn.Module):
                  use_attention_linear_bias: bool = False,
                  int8_mode: int = 0,
                  weights_data_type: typing.Union[str, np.dtype] = np.float32,
+                 int8_mode_gptq: int = 0,
                  shared_contexts_ratio: float = 1.0):
         super().__init__()
         self.head_num = head_num
@@ -495,6 +567,7 @@ class GPT(nn.Module):
         self.use_sparse_gemm = False
         self.build_model = False
         self.int8_mode = int8_mode
+        self.int8_mode_gptq = int8_mode_gptq
         self.weights_data_type = weights_data_type
         self.shared_contexts_ratio = shared_contexts_ratio
 
@@ -518,7 +591,8 @@ class GPT(nn.Module):
                                   has_adapters=self.has_adapters,
                                   adapter_inter_size=self.adapter_inter_size,
                                   int8_mode=int8_mode,
-                                  inter_size=inter_size)
+                                  inter_size=inter_size,
+                                  int8_mode_gptq=int8_mode_gptq)
 
         # Prepare for tensor/pipeline parallel
         try:
