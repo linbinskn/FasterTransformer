@@ -45,6 +45,11 @@ class GPTWeights:
             assert torch_infer_dtype == torch.float16 or torch_infer_dtype == torch.bfloat16, "Weight only quant only supported for infer type fp16 or bf16."
             quant = torch.ops.fastertransformer.symmetric_quantize_last_axis_of_batched_matrix
             self.weight_transpose_calibrate_quantize = lambda x: quant(x, torch.int8)
+        elif int8_mode == 3:
+            torch_infer_dtype = str_type_map[inference_data_type]
+            assert torch_infer_dtype == torch.float16 or torch_infer_dtype == torch.bfloat16, "Weight only quant only supported for infer type fp16 or bf16."
+            quant = torch.ops.fastertransformer.symmetric_quantize_last_axis_of_batched_matrix
+            self.weight_transpose_calibrate_quantize = lambda x: quant(x, torch.quint4x2)
         else:
             assert int8_mode == 0, "Invalid int8 mode for GPT. Must be 0 or 1"
 
@@ -179,7 +184,7 @@ class GPTWeights:
         # Initialization
         self._map(lambda w: torch.nn.init.normal_(w, mean=0., std=1.))
 
-        if (self.int8_mode != 0):
+        if (self.int8_mode == 1):
             self.int8_w.extend([torch.zeros(global_hidden_units, local_hidden_units *
                                3, dtype=torch.int8)] * layer_num)   # self_int8_kernel
             self.scale.extend([torch.zeros(local_hidden_units * 3, dtype=torch.float)] * layer_num)   # self_scale
@@ -205,6 +210,34 @@ class GPTWeights:
                 self.scale.extend([torch.zeros(local_adapter_inter_size, dtype=torch.float)]
                                   * layer_num)   # adaptor2_scale1
                 self.int8_w.extend([torch.zeros(local_adapter_inter_size, global_hidden_units,
+                                   dtype=torch.int8)] * layer_num)   # adaptor2_int8_kernel2
+                self.scale.extend([torch.zeros(global_hidden_units, dtype=torch.float)] * layer_num)   # adaptor2_scale2
+        if (self.int8_mode == 3):
+            self.int8_w.extend([torch.zeros(global_hidden_units, int(local_hidden_units *
+                               3 / 2), dtype=torch.int8)] * layer_num)   # self_int8_kernel
+            self.scale.extend([torch.zeros(local_hidden_units * 3, dtype=torch.float)] * layer_num)   # self_scale
+            self.int8_w.extend([torch.zeros(local_hidden_units, int(global_hidden_units / 2), dtype=torch.int8)]
+                               * layer_num)   # self_output_int8_kernel
+            self.scale.extend([torch.zeros(global_hidden_units, dtype=torch.float)] * layer_num)   # self_output_scale
+            self.int8_w.extend([torch.zeros(global_hidden_units, int(local_inter_size / 2),
+                               dtype=torch.int8)] * layer_num)   # ffn_int8_kernel1
+            self.scale.extend([torch.zeros(local_inter_size, dtype=torch.float)] * layer_num)   # ffn_scale1
+            self.int8_w.extend([torch.zeros(local_inter_size, int(global_hidden_units / 2),
+                               dtype=torch.int8)] * layer_num)   # ffn_int8_kernel2
+            self.scale.extend([torch.zeros(global_hidden_units, dtype=torch.float)] * layer_num)   # ffn_scale2
+            if self.has_adapters:
+                self.int8_w.extend([torch.zeros(global_hidden_units, int(local_adapter_inter_size / 2),
+                                   dtype=torch.int8)] * layer_num)   # adaptor1_int8_kernel1
+                self.scale.extend([torch.zeros(local_adapter_inter_size, dtype=torch.float)]
+                                  * layer_num)   # adaptor1_scale1
+                self.int8_w.extend([torch.zeros(local_adapter_inter_size, int(global_hidden_units / 2),
+                                   dtype=torch.int8)] * layer_num)   # adaptor1_int8_kernel2
+                self.scale.extend([torch.zeros(global_hidden_units, dtype=torch.float)] * layer_num)   # adaptor1_scale2
+                self.int8_w.extend([torch.zeros(global_hidden_units, int(local_adapter_inter_size / 2),
+                                   dtype=torch.int8)] * layer_num)   # adaptor2_int8_kernel1
+                self.scale.extend([torch.zeros(local_adapter_inter_size, dtype=torch.float)]
+                                  * layer_num)   # adaptor2_scale1
+                self.int8_w.extend([torch.zeros(local_adapter_inter_size, int(global_hidden_units / 2),
                                    dtype=torch.int8)] * layer_num)   # adaptor2_int8_kernel2
                 self.scale.extend([torch.zeros(global_hidden_units, dtype=torch.float)] * layer_num)   # adaptor2_scale2
 
@@ -413,7 +446,7 @@ class GPTWeights:
                                                            layer_num] = self.weight_transpose_calibrate_quantize(self.w[10 * layer_num + i])
 
                 # We clear the original weights since they are no longer needed
-                if self.int8_mode == 1:
+                if self.int8_mode == 1 or self.int8_mode == 3:
                     self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
                     self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
                     self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
@@ -430,7 +463,7 @@ class GPTWeights:
                         self.w[18 * layer_num + i + self.adapter_offset])
 
                     # Similar to above:
-                    if self.int8_mode == 1:
+                    if self.int8_mode == 1 or self.int8_mode == 3:
                         self.w[12 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
                         self.w[14 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
                         self.w[16 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])

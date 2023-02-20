@@ -55,10 +55,12 @@ def main():
         help='Data type of FT checkpoint weights',
     )
     parser.add_argument(
-        '--int8_mode', type=int, default=0, choices=[0, 1],
+        '--int8_mode', type=int, default=0, choices=[0, 1, 2, 3],
         help='The level of quantization to perform.'
              ' 0: No quantization. All computation in data_type'
-             ' 1: Quantize weights to int8, all compute occurs in fp16/bf16. Not supported when data_type is fp32')
+             ' 1: Quantize weights to int8, all compute occurs in fp16/bf16. Not supported when data_type is fp32'
+             ' 2: A8W8, seems not supported currently'
+             ' 3: Quantize weights to int4, all compute occurs in fp16/bf16. Not supported when data_type is fp32')
     parser.add_argument(
         '--use_gpt_decoder_ops', action='store_true',
         help='Use separate decoder FT operators instead of end-to-end model op.')

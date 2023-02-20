@@ -21,6 +21,8 @@
 #include "src/fastertransformer/kernels/matrix_vector_multiplication.h"
 #include "src/fastertransformer/layers/attention_layers/BaseAttentionLayer.h"
 
+#include "cutlass/numeric_types.h"
+
 namespace fastertransformer {
 
 template<typename T>
@@ -41,6 +43,7 @@ private:
     const bool   neox_rotary_style_;
 
     std::shared_ptr<CutlassFpAIntBGemmRunner<T, uint8_t>> weight_only_int8_fc_runner_;
+    std::shared_ptr<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>> weight_only_int4_fc_runner_;
     std::shared_ptr<CutlassInt8GemmRunner<T>>             int8_fc_runner_;
 
     void allocateBuffer() override;

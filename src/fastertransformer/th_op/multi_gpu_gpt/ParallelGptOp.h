@@ -132,7 +132,7 @@ public:
                 gpt_weights_.decoder_layer_weights[i]->ffn_weights.output_weight.int8_kernel =
                     get_ptr<int8_t>(int8_weights_[i + 3 * layer_num_]);
 
-                if (int8_mode == 1) {
+                if (int8_mode == 1 || int8_mode == 3) {
                     gpt_weights_.decoder_layer_weights[i]->self_attention_weights.query_weight.weight_only_quant_scale =
                         get_ptr<T>(scale_[i + 0 * layer_num_]);
                     gpt_weights_.decoder_layer_weights[i]
@@ -222,7 +222,7 @@ public:
                     gpt_weights_.decoder_layer_weights[i]->after_ffn_adapter_weights.output_weight.int8_kernel =
                         get_ptr<int8_t>(int8_weights_[i + 7 * layer_num_]);
 
-                    if (int8_mode == 1) {
+                    if (int8_mode == 1 || int8_mode == 3) {
                         gpt_weights_.decoder_layer_weights[i]
                             ->after_attention_adapter_weights.intermediate_weight.weight_only_quant_scale =
                             get_ptr<T>(scale_[i + 4 * layer_num_]);

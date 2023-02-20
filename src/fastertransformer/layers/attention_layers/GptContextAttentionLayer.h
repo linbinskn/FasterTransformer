@@ -22,6 +22,8 @@
 #include "src/fastertransformer/kernels/cutlass_kernels/int8_gemm/int8_gemm.h"
 #include "src/fastertransformer/layers/attention_layers/BaseAttentionLayer.h"
 
+#include "cutlass/numeric_types.h"
+
 namespace fastertransformer {
 
 template<typename T>
@@ -55,6 +57,7 @@ private:
     bool is_qk_buf_float_;
 
     std::shared_ptr<CutlassFpAIntBGemmRunner<T, uint8_t>> weight_only_int8_fc_runner_;
+    std::shared_ptr<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>> weight_only_int4_fc_runner_;
     std::shared_ptr<CutlassInt8GemmRunner<T>>             int8_fc_runner_;
 
 protected:
@@ -77,6 +80,7 @@ protected:
     // int8_mode_ == 0 means we don't use any mechanism related to INT8.
     // int8_mode_ == 1 for weight quantized only gemm for GPT
     // int8_mode_ == 2 for SmoothQuant O3 (per tensor scales)
+    // int8_mode_ == 3 for weight quantized only int4 gemm for GPT
     const int int8_mode_ = 0;
 
 public:
