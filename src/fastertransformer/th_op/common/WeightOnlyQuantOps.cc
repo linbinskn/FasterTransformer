@@ -136,6 +136,24 @@ Tensor preprocess_weights_for_mixed_gemm(Tensor row_major_quantized_weight, torc
     return processed_tensor;
 }
 
+Tensor
+symmetric_quantize_helper_preprocess(Tensor weight, torch::ScalarType quant_type, bool return_unprocessed_quantized_tensor)
+{
+    const size_t num_experts = weight.dim() == 2 ? 1 : weight.size(0);
+    const size_t num_rows    = weight.size(-2);
+    const size_t num_cols    = (weight.size(-1) * 2);
+    ft::QuantType ft_quant_type = get_ft_quant_type(quant_type);
+    Tensor processed_quantized_weight = torch::empty_like(weight);
+    int8_t* unprocessed_quantized_weight_ptr = get_ptr<int8_t>(weight);
+    int8_t* processed_quantized_weight_ptr   = get_ptr<int8_t>(processed_quantized_weight);
+    ft::symmetric_quantize_preprocess(processed_quantized_weight_ptr,
+                                        unprocessed_quantized_weight_ptr,
+                                        {num_experts, num_rows, num_cols},
+                                        ft_quant_type);
+
+    return processed_quantized_weight;
+}
+
 std::vector<Tensor>
 symmetric_quantize_helper(Tensor weight, torch::ScalarType quant_type, bool return_unprocessed_quantized_tensor)
 {
@@ -224,6 +242,11 @@ symmetric_quantize_helper(Tensor weight, torch::ScalarType quant_type, bool retu
 std::vector<Tensor> symmetric_quantize_last_axis_of_batched_matrix(Tensor weight, torch::ScalarType quant_type)
 {
     return symmetric_quantize_helper(weight, quant_type, false);
+}
+
+Tensor symmetric_quantize_last_axis_of_batched_matrix_preprocess(Tensor weight, torch::ScalarType quant_type)
+{
+    return symmetric_quantize_helper_preprocess(weight, quant_type, false);
 }
 
 // Same as symmetric_quantize_last_axis_of_batched_matrix but returns a tuple of:
@@ -352,6 +375,11 @@ static auto pack_int8_tensor_to_packed_int4 = torch::RegisterOperators(
 static auto _symmetric_quantize_last_axis_of_batched_matrix =
     torch::RegisterOperators("fastertransformer::_symmetric_quantize_last_axis_of_batched_matrix",
                              &torch_ext::_symmetric_quantize_last_axis_of_batched_matrix);
+
+// Utility methods that may be useful for preprocessing weights in torch.
+static auto symmetric_quantize_last_axis_of_batched_matrix_preprocess =
+    torch::RegisterOperators("fastertransformer::symmetric_quantize_last_axis_of_batched_matrix_preprocess",
+                             &torch_ext::symmetric_quantize_last_axis_of_batched_matrix_preprocess);
 
 static auto add_bias_and_interleave_int4s = torch::RegisterOperators(
     "fastertransformer::_add_bias_and_interleave_int4s", &torch_ext::add_bias_and_interleave_int4s);

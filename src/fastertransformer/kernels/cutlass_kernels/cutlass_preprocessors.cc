@@ -672,6 +672,18 @@ void symmetric_quantize(int8_t*                    processed_quantized_weight,
     preprocess_weights_for_mixed_gemm(processed_quantized_weight, unprocessed_quantized_weight, shape, quant_type);
 }
 
+void symmetric_quantize_preprocess(int8_t*                    processed_quantized_weight,
+                        int8_t*                    unprocessed_quantized_weight,
+                        const std::vector<size_t>& shape,
+                        QuantType                  quant_type)
+{
+
+    FT_CHECK_WITH_INFO(processed_quantized_weight, "Processed quantized tensor is NULL");
+    FT_CHECK_WITH_INFO(shape.size() == 2 || shape.size() == 3, "Shape must be 2-D or 3-D");
+
+    preprocess_weights_for_mixed_gemm(processed_quantized_weight, unprocessed_quantized_weight, shape, quant_type);
+}
+
 template void
 symmetric_quantize<half, float>(int8_t*, int8_t*, half*, const float*, const std::vector<size_t>&, QuantType);
 
