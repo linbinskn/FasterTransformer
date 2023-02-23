@@ -163,10 +163,15 @@ def get_args():
         help='The data type of FT checkpoint. If None, it will be retrieved '
              'from the config file in the checkpoint directory.')
     group.add_argument(
-        '--int8_mode', type=int, default=0, choices=[0, 1],
+        '--int8_mode', type=int, default=0, choices=[0, 1, 3],
         help='The level of quantization to perform.'
              ' 0: No quantization. All computation in data_type'
              ' 1: Quantize weights to int8, all compute occurs in fp16/bf16. Not supported when data_type is fp32')
+    group.add_argument(
+        '--int4_mode_gptq', type=int, default=0, choices=[0, 1],
+        help='Customize quantized int4 model.'
+             ' 0: No customized quantized int4 model'
+             ' 1: Input model is quantized to int4, int8_mode should be 3')
     args = parser.parse_args()
 
     print('\n=================== Arguments ===================')
@@ -239,7 +244,8 @@ def get_model_and_tokenizer(args: argparse.Namespace):
         lib_path=args.lib_path,
         pipeline_para_size=args.pipeline_para_size,
         shared_contexts_ratio=args.shared_contexts_ratio,
-        int8_mode=args.int8_mode
+        int8_mode=args.int8_mode,
+        int4_mode_gptq=args.int4_mode_gptq
     ))
 
     print('[FT][INFO] Load BLOOM model')

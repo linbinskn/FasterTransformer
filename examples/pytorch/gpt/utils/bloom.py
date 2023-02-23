@@ -241,7 +241,8 @@ class Bloom(parallel_gpt.ParallelGPT):
                  weights_data_type: str | np.dtype = np.float32,
                  layernorm_eps: float = 1e-5,
                  shared_contexts_ratio: float = 1.0,
-                 int8_mode: int = 0):
+                 int8_mode: int = 0,
+                 int4_mode_gptq: int = 0):
         super().__init__(
             head_num, size_per_head, vocab_size, start_id, end_id, layer_num,
             0, tensor_para_size,  pipeline_para_size,
@@ -258,6 +259,7 @@ class Bloom(parallel_gpt.ParallelGPT):
             adapter_inter_size=0,
             use_attention_linear_bias=True,
             int8_mode=int8_mode,
+            int4_mode_gptq=int4_mode_gptq,
             weights_data_type=weights_data_type,
             shared_contexts_ratio=shared_contexts_ratio)
 
