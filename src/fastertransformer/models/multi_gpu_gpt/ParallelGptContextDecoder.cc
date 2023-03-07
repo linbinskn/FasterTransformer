@@ -26,6 +26,8 @@ template<typename T>
 void ParallelGptContextDecoder<T>::initialize()
 {
     FT_LOG_DEBUG(__PRETTY_FUNCTION__);
+    cudaStreamCreate(&stream_data_);
+    cudaEventRecord(event_data_, stream_data_);
     self_attention_layer_ = new TensorParallelGptContextAttentionLayer<T>(max_batch_size_,
                                                                           max_seq_len_,
                                                                           head_num_,
@@ -234,7 +236,8 @@ ParallelGptContextDecoder<T>::ParallelGptContextDecoder(size_t               max
                                                         bool                 sparse,
                                                         int                  int8_mode,
                                                         std::shared_ptr<AbstractCustomComm> custom_all_reduce_comm,
-                                                        int                                 enable_custom_all_reduce):
+                                                        int                                 enable_custom_all_reduce,
+                                                        int                                 offload_per_layer_num):
     BaseLayer(stream, cublas_wrapper, allocator, is_free_buffer_after_forward, nullptr, sparse),
     max_batch_size_(max_batch_size),
     max_seq_len_(max_seq_len),
@@ -257,7 +260,8 @@ ParallelGptContextDecoder<T>::ParallelGptContextDecoder(size_t               max
     custom_all_reduce_comm_(custom_all_reduce_comm),
     enable_custom_all_reduce_(enable_custom_all_reduce),
     attention_type_(attention_type),
-    int8_mode_(int8_mode)
+    int8_mode_(int8_mode),
+    offload_per_layer_num_(offload_per_layer_num)
 {
     initialize();
 }
@@ -286,7 +290,8 @@ ParallelGptContextDecoder<T>::ParallelGptContextDecoder(ParallelGptContextDecode
     custom_all_reduce_comm_(decoder.custom_all_reduce_comm_),
     enable_custom_all_reduce_(decoder.enable_custom_all_reduce_),
     attention_type_(decoder.attention_type_),
-    int8_mode_(decoder.int8_mode_)
+    int8_mode_(decoder.int8_mode_),
+    offload_per_layer_num_(decoder.offload_per_layer_num_)
 {
     initialize();
 }
@@ -527,6 +532,69 @@ void ParallelGptContextDecoder<T>::forward(
             // The key/value cache stride per batch.
             const size_t cache_stride_per_batch = hidden_units_ / tensor_para_.world_size_ * max_seq_len;
             // The key/value cache offset of the layer.
+            size_t cache_layer_offset;
+            T *k_cache_ptr, *v_cache_ptr;
+            if(use_shared_contexts){
+                k_cache_ptr = k_cache_layer_;
+                v_cache_ptr = v_cache_layer_;
+            }
+            else if(offload_per_layer_num_ == 0){
+                // The key/value cache stride per batch.
+                // The key/value cache offset of the layer.
+                cache_layer_offset =
+                    (l - getFirstLayerParallelId()) * request_batch_size * cache_stride_per_batch;
+                // The key/value cache offset of the current local batch iteration.
+                const size_t ite_cache_offset = ite * local_batch_size * cache_stride_per_batch;
+                const size_t cache_offset     = cache_layer_offset + ite_cache_offset;
+
+                k_cache_ptr = use_shared_contexts ? k_cache_layer_ : k_cache.getPtrWithOffset<T>(cache_offset);
+                v_cache_ptr = use_shared_contexts ? v_cache_layer_ : v_cache.getPtrWithOffset<T>(cache_offset);
+            }else{
+                if((l + 1) % offload_per_layer_num_ == 0) {
+                    int layer_num_in_offload = (l + 1) / offload_per_layer_num_;
+                    cache_layer_offset =
+                    (layer_num_in_offload - 1) * request_batch_size * cache_stride_per_batch;
+                    const size_t ite_cache_offset = ite * local_batch_size * cache_stride_per_batch;
+                    const size_t cache_offset     = cache_layer_offset + ite_cache_offset;
+
+                    Tensor k_cache_offload = output_tensors->at("key_cache_offload");
+                    Tensor v_cache_offload = output_tensors->at("value_cache_offload");
+
+                    T* k_cache_host_ptr = k_cache_offload.getPtrWithOffset<T>(cache_offset);
+                    T* v_cache_host_ptr = v_cache_offload.getPtrWithOffset<T>(cache_offset);
+
+                    // k_cache_ptr = use_shared_contexts ? k_cache_layer_ : k_cache_offload.getPtrWithOffset<T>(cache_offset);
+                    // v_cache_ptr = use_shared_contexts ? v_cache_layer_ : v_cache_offload.getPtrWithOffset<T>(cache_offset);
+
+                    size_t k_cache_malloc_size = 1, v_cache_malloc_size = 1;
+                    for(auto s:self_k_cache_size) k_cache_malloc_size = k_cache_malloc_size * s;
+                    for(auto s:self_v_cache_size) v_cache_malloc_size = v_cache_malloc_size * s;
+
+                    k_cache_ptr = reinterpret_cast<T*>(
+                        allocator_->reMalloc(k_cache_ptr, sizeof(T) * k_cache_malloc_size, false));
+                    v_cache_ptr = reinterpret_cast<T*>(
+                        allocator_->reMalloc(v_cache_ptr, sizeof(T) * v_cache_malloc_size, false));
+                    cudaH2Dcpy(k_cache_ptr, k_cache_host_ptr, k_cache_malloc_size);
+                    cudaH2Dcpy(v_cache_ptr, v_cache_host_ptr, k_cache_malloc_size);
+                }else{
+                    // The key/value cache stride per batch.
+                    int real_l = (l / offload_per_layer_num_) * (offload_per_layer_num_ - 1) + l % offload_per_layer_num_;
+                    // The key/value cache offset of the layer.
+                    cache_layer_offset =
+                        (real_l - getFirstLayerParallelId()) * request_batch_size * cache_stride_per_batch;
+                    // The key/value cache offset of the current local batch iteration.
+                    const size_t ite_cache_offset = ite * local_batch_size * cache_stride_per_batch;
+                    const size_t cache_offset     = cache_layer_offset + ite_cache_offset;
+
+                    k_cache_ptr = use_shared_contexts ? k_cache_layer_ : k_cache.getPtrWithOffset<T>(cache_offset);
+                    v_cache_ptr = use_shared_contexts ? v_cache_layer_ : v_cache.getPtrWithOffset<T>(cache_offset);
+                }
+            }
+
+            /*
+            // The key/value cache stride per batch.
+            const size_t cache_stride_per_batch = hidden_units_ / tensor_para_.world_size_ * max_seq_len;
+            // The key/value cache offset of the layer.
             const size_t cache_layer_offset =
                 (l - getFirstLayerParallelId()) * request_batch_size * cache_stride_per_batch;
             // The key/value cache offset of the current local batch iteration.
@@ -535,6 +603,7 @@ void ParallelGptContextDecoder<T>::forward(
 
             T* k_cache_ptr = use_shared_contexts ? k_cache_layer_ : k_cache.getPtrWithOffset<T>(cache_offset);
             T* v_cache_ptr = use_shared_contexts ? v_cache_layer_ : v_cache.getPtrWithOffset<T>(cache_offset);
+            */
 
             TensorMap self_attention_output_tensors{
                 {"hidden_features",
@@ -567,6 +636,30 @@ void ParallelGptContextDecoder<T>::forward(
                 sync_check_cuda_error();
             }
             POP_RANGE;
+
+            if(offload_per_layer_num_ != 0 && (l + 1) % offload_per_layer_num_ == 0){
+                int layer_num_in_offload = (l + 1) / offload_per_layer_num_;
+                cache_layer_offset =
+                (layer_num_in_offload - 1) * request_batch_size * cache_stride_per_batch;
+                const size_t ite_cache_offset = ite * local_batch_size * cache_stride_per_batch;
+                const size_t cache_offset     = cache_layer_offset + ite_cache_offset;
+
+                Tensor k_cache_offload = output_tensors->at("key_cache_offload");
+                Tensor v_cache_offload = output_tensors->at("value_cache_offload");
+
+                T* k_cache_host_ptr = k_cache_offload.getPtrWithOffset<T>(cache_offset);
+                T* v_cache_host_ptr = v_cache_offload.getPtrWithOffset<T>(cache_offset);
+
+                size_t k_cache_malloc_size = 1, v_cache_malloc_size = 1;
+                for(auto s:self_k_cache_size) k_cache_malloc_size = k_cache_malloc_size * s;
+                for(auto s:self_v_cache_size) v_cache_malloc_size = v_cache_malloc_size * s;
+
+                cudaD2Hcpy(k_cache_host_ptr, k_cache_ptr, k_cache_malloc_size);
+                cudaD2Hcpy(v_cache_host_ptr, v_cache_ptr, v_cache_malloc_size);
+
+                allocator_->free((void**)(&k_cache_ptr));
+                allocator_->free((void**)(&v_cache_ptr));
+            }
 
             // the adapter after attention (only pre layernorm currently)
             PUSH_RANGE("post mha layernorm");

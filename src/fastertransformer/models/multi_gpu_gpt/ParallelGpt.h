@@ -49,6 +49,9 @@ private:
     const float layernorm_eps_;  // OPT
     float       shared_contexts_ratio_;
 
+    float offload_cache_ratio_; // ratio of offloading k_v cache to cpu
+    int offload_per_layer_num_; // every offload_per_layer_num_ layer offloading one layer to cpu
+
     // TODO(bhsueh) remove these member because they are runtime parameters
     size_t             top_k_;
     float              top_p_;
@@ -139,6 +142,12 @@ protected:
 
     T*   key_cache_;
     T*   value_cache_;
+
+    T*   key_cache_offload_;
+    T*   value_cache_offload_;
+    T*   key_cache_offload_gpu_;
+    T*   value_cache_offload_gpu_;
+
     int* cache_indirections_[2] = {nullptr, nullptr};
 
     int* start_ids_buf_;
@@ -221,7 +230,8 @@ public:
                 int                                 int8_mode                = 0,
                 std::shared_ptr<AbstractCustomComm> custom_all_reduce_comm   = nullptr,
                 int                                 enable_custom_all_reduce = 0,
-                float                               shared_contexts_ratio    = 1.0f);
+                float                               shared_contexts_ratio    = 1.0f,
+                float                               offload_cache_ratio      = 0.0f);
 
     ParallelGpt(ParallelGpt<T> const& gpt);
 

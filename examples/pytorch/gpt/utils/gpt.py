@@ -464,7 +464,8 @@ class GPT(nn.Module):
                  use_attention_linear_bias: bool = False,
                  int8_mode: int = 0,
                  weights_data_type: typing.Union[str, np.dtype] = np.float32,
-                 shared_contexts_ratio: float = 1.0):
+                 shared_contexts_ratio: float = 1.0,
+                 offload_cache_ratio: float = 0.0):
         super().__init__()
         self.head_num = head_num
         self.size_per_head = size_per_head
@@ -497,6 +498,7 @@ class GPT(nn.Module):
         self.int8_mode = int8_mode
         self.weights_data_type = weights_data_type
         self.shared_contexts_ratio = shared_contexts_ratio
+        self.offload_cache_ratio = offload_cache_ratio
 
         assert torch.cuda.is_available(), "CUDA is required for this model."
 

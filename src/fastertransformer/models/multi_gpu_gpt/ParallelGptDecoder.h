@@ -52,6 +52,8 @@ private:
     size_t adapter_inter_size_;
     T*     after_adapter_attn_output_;
 
+    int offload_per_layer_num_;
+
     // calculated data
     size_t hidden_units_;
 
@@ -108,7 +110,8 @@ public:
                        bool                                sparse                    = false,
                        int                                 int8_mode                 = 0,
                        std::shared_ptr<AbstractCustomComm> custom_all_reduce_comm    = nullptr,
-                       int                                 enable_custom_all_reduce_ = 0);
+                       int                                 enable_custom_all_reduce_ = 0,
+                       int                                 offload_per_layer_num     = 0);
 
     ParallelGptDecoder(ParallelGptDecoder<T> const& decoder);
 

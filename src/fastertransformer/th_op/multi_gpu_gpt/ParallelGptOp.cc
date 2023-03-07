@@ -46,7 +46,8 @@ ParallelGptOp::ParallelGptOp(const int64_t                 head_num,
                              const std::vector<th::Tensor> weights,
                              const std::vector<th::Tensor> int8_weights,
                              const std::vector<th::Tensor> scale,
-                             const double                  shared_contexts_ratio):
+                             const double                  shared_contexts_ratio,
+                             const double                  offload_cache_ratio):
     st_(weights[0].scalar_type())
 {
     for (auto t : weights) {
@@ -82,7 +83,8 @@ ParallelGptOp::ParallelGptOp(const int64_t                 head_num,
                                      weights,
                                      int8_weights,
                                      scale,
-                                     shared_contexts_ratio);
+                                     shared_contexts_ratio,
+                                     offload_cache_ratio);
             break;
         case at::ScalarType::Half:
             ftgpt = new FTGpt<half>(head_num,
@@ -102,7 +104,8 @@ ParallelGptOp::ParallelGptOp(const int64_t                 head_num,
                                     weights,
                                     int8_weights,
                                     scale,
-                                    shared_contexts_ratio);
+                                    shared_contexts_ratio,
+                                    offload_cache_ratio);
             break;
 #ifdef ENABLE_BF16
         case at::ScalarType::BFloat16:
@@ -123,7 +126,8 @@ ParallelGptOp::ParallelGptOp(const int64_t                 head_num,
                                              weights,
                                              int8_weights,
                                              scale,
-                                             shared_contexts_ratio);
+                                             shared_contexts_ratio,
+                                             offload_cache_ratio);
             break;
 #endif
         default:
@@ -236,5 +240,6 @@ static auto fasterTransformerGptTHS =
                               std::vector<th::Tensor>,
                               std::vector<th::Tensor>,
                               std::vector<th::Tensor>,
+                              double,
                               double>())
         .def("forward", &torch_ext::ParallelGptOp::forward);

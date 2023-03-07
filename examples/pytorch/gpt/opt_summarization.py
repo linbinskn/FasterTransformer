@@ -108,7 +108,7 @@ def main():
 
     if summarize:
         top_k = 2
-        output_len = 100
+        output_len = 1024
     else:
         top_k = 1
         output_len = 256
@@ -156,7 +156,9 @@ def main():
                           activation_type=activation_type,
                           has_post_decoder_layernorm=has_post_decoder_layernorm,
                           int8_mode=args.int8_mode,
-                          weights_data_type=args.weights_data_type)
+                          weights_data_type=args.weights_data_type,
+                          shared_contexts_ratio=0.0,
+                          offload_cache_ratio=0.5)
         if not gpt.load(ckpt_path=ckpt_path):
             print("[WARNING] Checkpoint file not found. Model loading is skipped.")
     else:

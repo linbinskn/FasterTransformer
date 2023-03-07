@@ -52,6 +52,8 @@ private:
     LayerNormType        layernorm_type_;
     ActivationType       activation_type_;
 
+    int offload_per_layer_num_; // every offload_per_layer_num_ layer offloading one layer to cpu
+
     // adapter
     bool   has_adapters_;
     size_t adapter_inter_size_;
@@ -108,6 +110,9 @@ private:
     T*   fc2_result_                               = nullptr;
     T*   adapter_fc2_result_                       = nullptr;
 
+    cudaStream_t stream_data_;
+    cudaEvent_t event_data_;
+
 protected:
 public:
     ParallelGptContextDecoder(size_t                              max_batch_size,
@@ -132,7 +137,8 @@ public:
                               bool                                sparse                   = false,
                               int                                 int8_mode                = 0,
                               std::shared_ptr<AbstractCustomComm> custom_all_reduce_comm   = nullptr,
-                              int                                 enable_custom_all_reduce = 0);
+                              int                                 enable_custom_all_reduce = 0,
+                              int                                 offload_per_layer_num_   = 0);
 
     ParallelGptContextDecoder(ParallelGptContextDecoder<T> const& decoder);
 

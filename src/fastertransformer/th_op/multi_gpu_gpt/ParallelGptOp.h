@@ -69,7 +69,8 @@ public:
           const vector<th::Tensor>   weights,
           const vector<th::Tensor>   int8_weights,
           const vector<th::Tensor>   scale,
-          const double               shared_contexts_ratio):
+          const double               shared_contexts_ratio,
+          const double               offload_cache_ratio):
         head_num_(head_num),
         size_per_head_(size_per_head),
         inter_size_(inter_size),
@@ -87,7 +88,8 @@ public:
         weights_(weights),
         int8_weights_(int8_weights),
         scale_(scale),
-        shared_contexts_ratio_(shared_contexts_ratio)
+        shared_contexts_ratio_(shared_contexts_ratio),
+        offload_cache_ratio_(offload_cache_ratio)
     {
         ft::check_cuda_error(cublasLtCreate(&cublasltHandle_));
         cublas_algo_map_      = new ft::cublasAlgoMap(GEMM_CONFIG);
@@ -354,7 +356,8 @@ public:
                                                     int8_mode_,
                                                     nullptr,
                                                     0,
-                                                    shared_contexts_ratio_);
+                                                    shared_contexts_ratio_,
+                                                    offload_cache_ratio_);
 
         std::vector<uint32_t> output_seq_len(request_batch_size, total_output_len);
 
@@ -471,6 +474,7 @@ private:
     const int64_t        start_id_;
     const int64_t        end_id_;
     const double         shared_contexts_ratio_;
+    const double         offload_cache_ratio_;
 
     const int64_t int8_mode_ = 0;
 
@@ -522,7 +526,8 @@ public:
                   const vector<th::Tensor>   weights,
                   const vector<th::Tensor>   int8_weights,
                   const vector<th::Tensor>   scale,
-                  const double               shared_contexts_ratio);
+                  const double               shared_contexts_ratio,
+                  const double               offload_cache_ratio);
 
     ~ParallelGptOp();
 

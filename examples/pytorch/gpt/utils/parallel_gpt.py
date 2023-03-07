@@ -48,5 +48,6 @@ class ParallelGPT(GPT):
             self.weights.w,
             self.weights.int8_w,
             self.weights.scale,
-            self.shared_contexts_ratio)
+            self.shared_contexts_ratio,
+            self.offload_cache_ratio)
         self.build_model = True
