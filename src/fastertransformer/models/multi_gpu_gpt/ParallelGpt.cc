@@ -141,7 +141,7 @@ void ParallelGpt<T>::allocateBuffer(size_t batch_size,
     key_cache_offload_ = (T*)(allocator_->reMalloc(key_cache_offload_, sizeof(T) * self_cache_size_offload * 2, true, true));
     value_cache_offload_ = key_cache_offload_ + self_cache_size_offload;
 
-    key_cache_offload_gpu_ = (T*)(allocator_->reMalloc(key_cache_offload_gpu_, sizeof(T) * self_cache_size_offload_gpu * 2, false));
+    key_cache_offload_gpu_ = (T*)(allocator_->reMalloc(key_cache_offload_gpu_, sizeof(T) * self_cache_size_offload_gpu * 2, true));
     value_cache_offload_gpu_ = key_cache_offload_gpu_ + self_cache_size_offload_gpu;
 
     if (beam_width > 1) {
@@ -1367,7 +1367,9 @@ void ParallelGpt<T>::forward(std::unordered_map<std::string, Tensor>*       outp
                      {"key_cache", Tensor(MEMORY_GPU, data_type, self_k_cache_shape, key_cache_)},
                      {"value_cache", Tensor(MEMORY_GPU, data_type, self_v_cache_shape, value_cache_)},
                      {"key_cache_offload", Tensor(MEMORY_CPU, data_type, self_k_cache_offload_shape, key_cache_offload_)},
-                     {"value_cache_offload", Tensor(MEMORY_CPU, data_type, self_v_cache_offload_shape, value_cache_offload_)}});
+                     {"value_cache_offload", Tensor(MEMORY_CPU, data_type, self_v_cache_offload_shape, value_cache_offload_)},
+                     {"key_cache_offload_gpu", Tensor(MEMORY_GPU, data_type, self_k_cache_offload_gpu_shape, key_cache_offload_gpu_)},
+                     {"value_cache_offload_gpu", Tensor(MEMORY_GPU, data_type, self_k_cache_offload_gpu_shape, value_cache_offload_gpu_)}});
 
                 gpt_decoder_->forward(
                     &decoder_output_tensors, &decoder_input_tensors, &gpt_weights->decoder_layer_weights);

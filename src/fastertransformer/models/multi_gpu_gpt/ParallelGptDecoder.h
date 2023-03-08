@@ -87,6 +87,9 @@ private:
     bool isLastLayerParallelId(uint l);
     int  getFirstLayerParallelId();
 
+    cudaStream_t stream_data_;
+    cudaEvent_t event_data_;
+
 protected:
     int int8_mode_ = 0;
 

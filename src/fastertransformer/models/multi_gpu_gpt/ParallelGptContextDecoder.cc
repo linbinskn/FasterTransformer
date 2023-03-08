@@ -27,6 +27,7 @@ void ParallelGptContextDecoder<T>::initialize()
 {
     FT_LOG_DEBUG(__PRETTY_FUNCTION__);
     cudaStreamCreate(&stream_data_);
+    cudaEventCreate(&event_data_);
     cudaEventRecord(event_data_, stream_data_);
     self_attention_layer_ = new TensorParallelGptContextAttentionLayer<T>(max_batch_size_,
                                                                           max_seq_len_,
@@ -570,13 +571,52 @@ void ParallelGptContextDecoder<T>::forward(
                     for(auto s:self_k_cache_size) k_cache_malloc_size = k_cache_malloc_size * s;
                     for(auto s:self_v_cache_size) v_cache_malloc_size = v_cache_malloc_size * s;
 
+                    cudaEventSynchronize(event_data_);
+
+                    Tensor k_cache_offload_gpu = output_tensors->at("key_cache_offload_gpu");
+                    Tensor v_cache_offload_gpu = output_tensors->at("value_cache_offload_gpu");
+
+                    k_cache_ptr = k_cache_offload_gpu.getPtrWithOffset<T>(0);
+                    v_cache_ptr = v_cache_offload_gpu.getPtrWithOffset<T>(0);
+
+                    /*
                     k_cache_ptr = reinterpret_cast<T*>(
                         allocator_->reMalloc(k_cache_ptr, sizeof(T) * k_cache_malloc_size, false));
                     v_cache_ptr = reinterpret_cast<T*>(
                         allocator_->reMalloc(v_cache_ptr, sizeof(T) * v_cache_malloc_size, false));
+                    
                     cudaH2Dcpy(k_cache_ptr, k_cache_host_ptr, k_cache_malloc_size);
                     cudaH2Dcpy(v_cache_ptr, v_cache_host_ptr, k_cache_malloc_size);
+                    */
                 }else{
+                    if((l + 1) % offload_per_layer_num_ == 1){
+                        Tensor k_cache_offload_gpu = output_tensors->at("key_cache_offload_gpu");
+                        Tensor v_cache_offload_gpu = output_tensors->at("value_cache_offload_gpu");
+
+                        T* k_cache_offload_gpu_ptr = k_cache_offload_gpu.getPtrWithOffset<T>(0);
+                        T* v_cache_offload_gpu_ptr = v_cache_offload_gpu.getPtrWithOffset<T>(0);
+
+                        int layer_num_in_offload = (l + offload_per_layer_num_) / offload_per_layer_num_;
+                        cache_layer_offset =
+                        (layer_num_in_offload - 1) * request_batch_size * cache_stride_per_batch;
+                        const size_t ite_cache_offset = ite * local_batch_size * cache_stride_per_batch;
+                        const size_t cache_offset     = cache_layer_offset + ite_cache_offset;
+
+                        Tensor k_cache_offload = output_tensors->at("key_cache_offload");
+                        Tensor v_cache_offload = output_tensors->at("value_cache_offload");
+
+                        T* k_cache_host_ptr = k_cache_offload.getPtrWithOffset<T>(cache_offset);
+                        T* v_cache_host_ptr = v_cache_offload.getPtrWithOffset<T>(cache_offset);
+
+                        size_t mem_size = 1;
+                        for(auto s : k_cache_offload_gpu.shape) mem_size *= s;
+
+                        cudaMemcpyAsync(k_cache_offload_gpu_ptr, k_cache_host_ptr, sizeof(T) * mem_size, cudaMemcpyHostToDevice, stream_data_);
+                        sync_check_cuda_error();
+                        cudaMemcpyAsync(v_cache_offload_gpu_ptr, v_cache_host_ptr, sizeof(T) * mem_size, cudaMemcpyHostToDevice, stream_data_);
+                        sync_check_cuda_error();
+                    }
+
                     // The key/value cache stride per batch.
                     int real_l = (l / offload_per_layer_num_) * (offload_per_layer_num_ - 1) + l % offload_per_layer_num_;
                     // The key/value cache offset of the layer.
@@ -654,11 +694,15 @@ void ParallelGptContextDecoder<T>::forward(
                 for(auto s:self_k_cache_size) k_cache_malloc_size = k_cache_malloc_size * s;
                 for(auto s:self_v_cache_size) v_cache_malloc_size = v_cache_malloc_size * s;
 
-                cudaD2Hcpy(k_cache_host_ptr, k_cache_ptr, k_cache_malloc_size);
-                cudaD2Hcpy(v_cache_host_ptr, v_cache_ptr, v_cache_malloc_size);
+                cudaMemcpyAsync(k_cache_host_ptr, k_cache_ptr, sizeof(T) * k_cache_malloc_size, cudaMemcpyDeviceToHost, stream_data_);
+                sync_check_cuda_error();
+                cudaMemcpyAsync(v_cache_host_ptr, v_cache_ptr, sizeof(T) * v_cache_malloc_size, cudaMemcpyDeviceToHost, stream_data_);
+                sync_check_cuda_error();
+                // cudaD2Hcpy(k_cache_host_ptr, k_cache_ptr, k_cache_malloc_size);
+                // cudaD2Hcpy(v_cache_host_ptr, v_cache_ptr, v_cache_malloc_size);
 
-                allocator_->free((void**)(&k_cache_ptr));
-                allocator_->free((void**)(&v_cache_ptr));
+                // allocator_->free((void**)(&k_cache_ptr));
+                // allocator_->free((void**)(&v_cache_ptr));
             }
 
             // the adapter after attention (only pre layernorm currently)
