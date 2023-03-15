@@ -87,20 +87,20 @@ struct NcclParam {
 
 // New APIs
 template<typename T>
-void ftNcclAllReduceSum(const T* send_buf, T* recv_buf, const int data_size, NcclParam nccl_param, cudaStream_t stream);
+void ftNcclAllReduceSum(const T* send_buf, T* recv_buf, size_t data_size, NcclParam nccl_param, cudaStream_t stream);
 
 template<typename T>
 void ftNcclAllGather(
-    const T* send_buf, T* recv_buf, const int data_size, const int rank, NcclParam nccl_param, cudaStream_t stream);
+    const T* send_buf, T* recv_buf, size_t data_size, const int rank, NcclParam nccl_param, cudaStream_t stream);
 
 template<typename T>
-void ftNcclBroadCast(T* buff, const int data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
+void ftNcclBroadCast(T* buff, size_t data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
 
 template<typename T>
-void ftNcclRecv(T* recv_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+void ftNcclRecv(T* recv_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 
 template<typename T>
-void ftNcclSend(const T* send_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+void ftNcclSend(const T* send_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 
 // nccl stream synchronize, abort nccl comms and throw errors when nccl async errors detected
 void ftNcclStreamSynchronize(NcclParam tensor_para, NcclParam pipeline_para_, cudaStream_t stream);

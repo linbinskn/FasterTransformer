@@ -456,7 +456,7 @@ void ParallelGptContextDecoder<T>::forward(
 
             if (isFirstLayerParallelId(l) && pipeline_para_.rank_ != 0) {
                 PUSH_RANGE("input communication");
-                const int data_size = h_token_num * hidden_units_ / tensor_para_.world_size_;
+                size_t data_size = (size_t)h_token_num * hidden_units_ / tensor_para_.world_size_;
                 ftNcclRecv(decoder_input + data_size * tensor_para_.rank_,
                            data_size,
                            pipeline_para_.rank_ - 1,
@@ -795,7 +795,7 @@ void ParallelGptContextDecoder<T>::forward(
             POP_RANGE;
             PUSH_RANGE("Nccl send");
             if (isLastLayerParallelId(l) == true && (pipeline_para_.rank_ != pipeline_para_.world_size_ - 1)) {
-                const int data_size = h_token_num * hidden_units_ / tensor_para_.world_size_;
+                size_t data_size = (size_t)h_token_num * hidden_units_ / tensor_para_.world_size_;
                 ftNcclSend(decoder_output + data_size * tensor_para_.rank_,
                            data_size,
                            pipeline_para_.rank_ + 1,

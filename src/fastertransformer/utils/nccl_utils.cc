@@ -53,7 +53,7 @@ ncclDataType_t getNcclDataType()
 #endif
 
 template<typename T>
-void ftNcclAllReduceSum(const T* send_buf, T* recv_buf, const int data_size, NcclParam nccl_param, cudaStream_t stream)
+void ftNcclAllReduceSum(const T* send_buf, T* recv_buf, size_t data_size, NcclParam nccl_param, cudaStream_t stream)
 {
     FT_LOG_DEBUG("%s start", __PRETTY_FUNCTION__);
 #ifdef BUILD_MULTI_GPU
@@ -68,7 +68,7 @@ void ftNcclAllReduceSum(const T* send_buf, T* recv_buf, const int data_size, Ncc
 
 template<typename T>
 void ftNcclAllGather(
-    const T* send_buf, T* recv_buf, const int data_size, const int rank, NcclParam nccl_param, cudaStream_t stream)
+    const T* send_buf, T* recv_buf, size_t data_size, const int rank, NcclParam nccl_param, cudaStream_t stream)
 {
     FT_LOG_DEBUG("%s start", __PRETTY_FUNCTION__);
 #ifdef BUILD_MULTI_GPU
@@ -82,7 +82,7 @@ void ftNcclAllGather(
 }
 
 template<typename T>
-void ftNcclSend(const T* send_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream)
+void ftNcclSend(const T* send_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream)
 {
     FT_LOG_DEBUG("%s start", __PRETTY_FUNCTION__);
 #ifdef BUILD_MULTI_GPU
@@ -93,22 +93,22 @@ void ftNcclSend(const T* send_buf, const int data_size, const int peer, NcclPara
 }
 
 template void
-ftNcclSend(const float* send_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclSend(const float* send_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclSend(const half* send_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclSend(const half* send_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 #ifdef ENABLE_BF16
 template void ftNcclSend(
-    const __nv_bfloat16* send_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+    const __nv_bfloat16* send_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 #endif
 template void
-ftNcclSend(const int* send_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclSend(const int* send_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclSend(const bool* send_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclSend(const bool* send_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclSend(const char* send_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclSend(const char* send_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 
 template<typename T>
-void ftNcclRecv(T* recv_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream)
+void ftNcclRecv(T* recv_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream)
 {
     FT_LOG_DEBUG("%s start", __PRETTY_FUNCTION__);
 #ifdef BUILD_MULTI_GPU
@@ -119,21 +119,21 @@ void ftNcclRecv(T* recv_buf, const int data_size, const int peer, NcclParam nccl
 }
 
 template void
-ftNcclRecv(float* recv_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclRecv(float* recv_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclRecv(half* recv_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclRecv(half* recv_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 #ifdef ENABLE_BF16
 template void
-ftNcclRecv(__nv_bfloat16* recv_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclRecv(__nv_bfloat16* recv_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 #endif
-template void ftNcclRecv(int* recv_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+template void ftNcclRecv(int* recv_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclRecv(bool* recv_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclRecv(bool* recv_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclRecv(char* recv_buf, const int data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
+ftNcclRecv(char* recv_buf, size_t data_size, const int peer, NcclParam nccl_param, cudaStream_t stream);
 
 template<typename T>
-void ftNcclBroadCast(T* buff, const int data_size, const int root, NcclParam nccl_param, cudaStream_t stream)
+void ftNcclBroadCast(T* buff, size_t data_size, const int root, NcclParam nccl_param, cudaStream_t stream)
 {
     FT_LOG_DEBUG("%s start", __PRETTY_FUNCTION__);
 #ifdef BUILD_MULTI_GPU
@@ -144,47 +144,47 @@ void ftNcclBroadCast(T* buff, const int data_size, const int root, NcclParam ncc
 }
 
 template void
-ftNcclBroadCast(char* buff, const int data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
+ftNcclBroadCast(char* buff, size_t data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclBroadCast(bool* buff, const int data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
+ftNcclBroadCast(bool* buff, size_t data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclBroadCast(int* buff, const int data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
+ftNcclBroadCast(int* buff, size_t data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclBroadCast(float* buff, const int data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
+ftNcclBroadCast(float* buff, size_t data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
 template void
-ftNcclBroadCast(half* buff, const int data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
+ftNcclBroadCast(half* buff, size_t data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
 #ifdef ENABLE_BF16
 template void
-ftNcclBroadCast(__nv_bfloat16* buff, const int data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
+ftNcclBroadCast(__nv_bfloat16* buff, size_t data_size, const int root, NcclParam nccl_param, cudaStream_t stream);
 #endif
 
 template void ftNcclAllReduceSum(
-    const float* send_buf, float* recv_buf, const int data_size, NcclParam nccl_param, cudaStream_t stream);
+    const float* send_buf, float* recv_buf, size_t data_size, NcclParam nccl_param, cudaStream_t stream);
 
 template void ftNcclAllReduceSum(
-    const half* send_buf, half* recv_buf, const int data_size, NcclParam nccl_param, cudaStream_t stream);
+    const half* send_buf, half* recv_buf, size_t data_size, NcclParam nccl_param, cudaStream_t stream);
 
 template void ftNcclAllReduceSum(
-    const int32_t* send_buf, int32_t* recv_buf, const int data_size, NcclParam nccl_param, cudaStream_t stream);
+    const int32_t* send_buf, int32_t* recv_buf, size_t data_size, NcclParam nccl_param, cudaStream_t stream);
 
 #ifdef ENABLE_BF16
 template void ftNcclAllReduceSum(const __nv_bfloat16* send_buf,
                                  __nv_bfloat16*       recv_buf,
-                                 const int            data_size,
+                                 size_t            data_size,
                                  NcclParam            nccl_param,
                                  cudaStream_t         stream);
 #endif
 
 template void ftNcclAllGather(const float* send_buf,
                               float*       recv_buf,
-                              const int    data_size,
+                              size_t    data_size,
                               const int    rank,
                               NcclParam    nccl_param,
                               cudaStream_t stream);
 
 template void ftNcclAllGather(const half*  send_buf,
                               half*        recv_buf,
-                              const int    data_size,
+                              size_t    data_size,
                               const int    rank,
                               NcclParam    nccl_param,
                               cudaStream_t stream);
@@ -192,7 +192,7 @@ template void ftNcclAllGather(const half*  send_buf,
 #ifdef ENABLE_BF16
 template void ftNcclAllGather(const __nv_bfloat16* send_buf,
                               __nv_bfloat16*       recv_buf,
-                              const int            data_size,
+                              size_t            data_size,
                               const int            rank,
                               NcclParam            nccl_param,
                               cudaStream_t         stream);
