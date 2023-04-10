@@ -98,7 +98,7 @@ void GptContextAttentionLayer<T>::forward(TensorMap*                output_tenso
                                 qkv_buf_);
 #endif
     }
-    else if (int8_mode_ == 1) {
+    else if (int8_mode_ == 1 || int8_mode_ == 4) {
         FT_CHECK(weight_only_int8_fc_runner_.get() != NULL && attention_weights->query_weight.int8_kernel != NULL
                  && attention_weights->query_weight.weight_only_quant_scale != NULL);
 
@@ -126,7 +126,7 @@ void GptContextAttentionLayer<T>::forward(TensorMap*                output_tenso
                                   attention_weights->query_weight.scale_inter,
                                   true);
     }
-    else if (int8_mode_ == 3) {
+    else if (int8_mode_ == 3 || int8_mode_ == 5) {
         FT_CHECK(weight_only_int4_fc_runner_.get() != NULL && attention_weights->query_weight.int8_kernel != NULL
                  && attention_weights->query_weight.weight_only_quant_scale != NULL);
 
@@ -362,7 +362,7 @@ void GptContextAttentionLayer<T>::forward(TensorMap*                output_tenso
 #endif
         }
         else {
-            if (int8_mode_ == 1) {
+            if (int8_mode_ == 1 || int8_mode_ == 4) {
                 FT_CHECK(weight_only_int8_fc_runner_.get() != NULL
                          && attention_weights->attention_output_weight.int8_kernel != NULL
                          && attention_weights->attention_output_weight.weight_only_quant_scale != NULL);
@@ -379,7 +379,7 @@ void GptContextAttentionLayer<T>::forward(TensorMap*                output_tenso
                     mixed_gemm_ws_bytes_,
                     stream_);
             }
-            else if (int8_mode_ == 3) {
+            else if (int8_mode_ == 3 || int8_mode_ == 5) {
                 FT_CHECK(weight_only_int4_fc_runner_.get() != NULL
                          && attention_weights->attention_output_weight.int8_kernel != NULL
                          && attention_weights->attention_output_weight.weight_only_quant_scale != NULL);
@@ -457,8 +457,8 @@ GptContextAttentionLayer<T>::GptContextAttentionLayer(size_t           max_batch
     rotary_embedding_dim_(0),
     neox_rotary_style_(false),
     is_qk_buf_float_(is_qk_buf_float || int8_mode == 2),
-    weight_only_int8_fc_runner_(int8_mode == 1 ? std::make_shared<CutlassFpAIntBGemmRunner<T, uint8_t>>() : nullptr),
-    weight_only_int4_fc_runner_(int8_mode == 3 ? std::make_shared<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>>() : nullptr),
+    weight_only_int8_fc_runner_((int8_mode == 1 || int8_mode == 4) ? std::make_shared<CutlassFpAIntBGemmRunner<T, uint8_t>>() : nullptr),
+    weight_only_int4_fc_runner_((int8_mode == 3 || int8_mode == 5) ? std::make_shared<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>>() : nullptr),
     int8_fc_runner_(int8_mode == 2 ? std::make_shared<CutlassInt8GemmRunner<T>>() : nullptr),
     int8_mode_(int8_mode)
 {
@@ -488,8 +488,8 @@ GptContextAttentionLayer<T>::GptContextAttentionLayer(size_t           max_batch
     rotary_embedding_dim_(0),
     neox_rotary_style_(false),
     is_qk_buf_float_(is_qk_buf_float || int8_mode == 2),
-    weight_only_int8_fc_runner_(int8_mode == 1 ? std::make_shared<CutlassFpAIntBGemmRunner<T, uint8_t>>() : nullptr),
-    weight_only_int4_fc_runner_(int8_mode == 3 ? std::make_shared<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>>() : nullptr),
+    weight_only_int8_fc_runner_((int8_mode == 1 || int8_mode == 4) ? std::make_shared<CutlassFpAIntBGemmRunner<T, uint8_t>>() : nullptr),
+    weight_only_int4_fc_runner_((int8_mode == 3 || int8_mode == 5) ? std::make_shared<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>>() : nullptr),
     int8_fc_runner_(int8_mode == 2 ? std::make_shared<CutlassInt8GemmRunner<T>>() : nullptr),
     int8_mode_(int8_mode)
 {
@@ -523,8 +523,8 @@ GptContextAttentionLayer<T>::GptContextAttentionLayer(size_t           max_batch
     rotary_embedding_dim_(rotary_embedding_dim),
     neox_rotary_style_(neox_rotary_style),
     is_qk_buf_float_(is_qk_buf_float),
-    weight_only_int8_fc_runner_(int8_mode == 1 ? std::make_shared<CutlassFpAIntBGemmRunner<T, uint8_t>>() : nullptr),
-    weight_only_int4_fc_runner_(int8_mode == 3 ? std::make_shared<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>>() : nullptr),
+    weight_only_int8_fc_runner_((int8_mode == 1 || int8_mode == 4) ? std::make_shared<CutlassFpAIntBGemmRunner<T, uint8_t>>() : nullptr),
+    weight_only_int4_fc_runner_((int8_mode == 3 || int8_mode == 5) ? std::make_shared<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>>() : nullptr),
     int8_fc_runner_(int8_mode == 2 ? std::make_shared<CutlassInt8GemmRunner<T>>() : nullptr),
     int8_mode_(int8_mode)
 {
@@ -609,14 +609,14 @@ void GptContextAttentionLayer<T>::allocateBuffer(size_t batch_size, size_t seq_l
         mixed_gemm_workspace_ = (char*)allocator_->reMalloc(mixed_gemm_workspace_, mixed_gemm_ws_bytes_, false);
     }
 
-    if (int8_mode_ == 1) {
+    if (int8_mode_ == 1 || int8_mode_ == 4) {
         // We use max_size for n and k since we reuse buffers for both FCs and want to allocate the max
         // possible memory that would be required by any of the individual gemms.
         const int max_size    = std::max(hidden_units_, 3 * local_hidden_units_);
         mixed_gemm_ws_bytes_  = weight_only_int8_fc_runner_->getWorkspaceSize(batch_size * seq_len, max_size, max_size);
         mixed_gemm_workspace_ = (char*)allocator_->reMalloc(mixed_gemm_workspace_, mixed_gemm_ws_bytes_, false);
     }
-    else if (int8_mode_ == 3) {
+    else if (int8_mode_ == 3 || int8_mode_ == 5) {
         // We use max_size for n and k since we reuse buffers for both FCs and want to allocate the max
         // possible memory that would be required by any of the individual gemms.
         const int max_size    = std::max(hidden_units_, 3 * local_hidden_units_);

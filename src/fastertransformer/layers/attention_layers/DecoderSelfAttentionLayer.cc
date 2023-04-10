@@ -204,14 +204,14 @@ void DecoderSelfAttentionLayer<T>::allocateBuffer(size_t batch_size)
     context_buf_ =
         reinterpret_cast<T*>(allocator_->reMalloc(context_buf_, type_size * batch_size * local_hidden_units_, false));
 
-    if (int8_mode_ == 1) {
+    if (int8_mode_ == 1 || int8_mode_ == 4) {
         // We use max_size for n and k since we reuse buffers for both FCs and want to allocate the max
         // possible memory that would be required by any of the individual gemms.
         const int max_size    = std::max(d_model_, 3 * local_hidden_units_);
         mixed_gemm_ws_bytes_  = weight_only_int8_fc_runner_->getWorkspaceSize(batch_size, max_size, max_size);
         mixed_gemm_workspace_ = (char*)allocator_->reMalloc(mixed_gemm_workspace_, mixed_gemm_ws_bytes_, false);
     }
-    else if (int8_mode_ == 3) {
+    else if (int8_mode_ == 3 || int8_mode_ == 5) {
         // We use max_size for n and k since we reuse buffers for both FCs and want to allocate the max
         // possible memory that would be required by any of the individual gemms.
         const int max_size    = std::max(d_model_, 3 * local_hidden_units_);
@@ -287,10 +287,10 @@ DecoderSelfAttentionLayer<T>::DecoderSelfAttentionLayer(size_t           max_bat
     FT_CHECK(size_per_head_ == 32 || size_per_head_ == 48 || size_per_head_ == 64 || size_per_head_ == 80
              || size_per_head_ == 96 || size_per_head_ == 128 || size_per_head_ == 144 || size_per_head_ == 160
              || size_per_head_ == 192 || size_per_head_ == 224 || size_per_head_ == 256);
-    if (int8_mode_ == 1) {
+    if (int8_mode_ == 1 || int8_mode_ == 4) {
         FT_CHECK_WITH_INFO(!(std::is_same<T, float>::value), "Weight only quant not supported for fp32.");
         weight_only_int8_fc_runner_ = std::make_shared<CutlassFpAIntBGemmRunner<T, uint8_t>>();
-    }else if(int8_mode_ == 3){
+    }else if(int8_mode_ == 3 || int8_mode_ == 5){
         FT_CHECK_WITH_INFO(!(std::is_same<T, float>::value), "Weight only quant not supported for fp32.");
         weight_only_int4_fc_runner_ = std::make_shared<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>>();
     }
@@ -539,7 +539,7 @@ void DecoderSelfAttentionLayer<T>::forward(TensorMap*                output_tens
 #endif
     }
     else {
-        if (int8_mode_ == 1) {
+        if (int8_mode_ == 1 || int8_mode_ == 4) {
             FT_CHECK(weight_only_int8_fc_runner_.get() != NULL && attention_weights->query_weight.int8_kernel != NULL
                      && attention_weights->query_weight.weight_only_quant_scale != NULL);
 
@@ -555,7 +555,7 @@ void DecoderSelfAttentionLayer<T>::forward(TensorMap*                output_tens
                 mixed_gemm_ws_bytes_,
                 stream_);
         }
-        else if (int8_mode_ == 3) {
+        else if (int8_mode_ == 3 || int8_mode_ == 5) {
             FT_CHECK(weight_only_int4_fc_runner_.get() != NULL && attention_weights->query_weight.int8_kernel != NULL
                      && attention_weights->query_weight.weight_only_quant_scale != NULL);
 
@@ -658,7 +658,7 @@ void DecoderSelfAttentionLayer<T>::forward(TensorMap*                output_tens
 #endif
     }
     else {
-        if (int8_mode_ == 1) {
+        if (int8_mode_ == 1 || int8_mode_ == 4) {
             FT_CHECK(weight_only_int8_fc_runner_.get() != NULL
                      && attention_weights->attention_output_weight.int8_kernel != NULL
                      && attention_weights->attention_output_weight.weight_only_quant_scale != NULL);
@@ -675,7 +675,7 @@ void DecoderSelfAttentionLayer<T>::forward(TensorMap*                output_tens
                 mixed_gemm_ws_bytes_,
                 stream_);
         }
-        else if (int8_mode_ == 3) {
+        else if (int8_mode_ == 3 || int8_mode_ == 5) {
             FT_CHECK(weight_only_int4_fc_runner_.get() != NULL
                      && attention_weights->attention_output_weight.int8_kernel != NULL
                      && attention_weights->attention_output_weight.weight_only_quant_scale != NULL);

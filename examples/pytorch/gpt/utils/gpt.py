@@ -37,16 +37,15 @@ class GPTWeights:
                  has_pre_decoder_layernorm: bool = False,
                  has_post_decoder_layernorm: bool = True,
                  int8_mode: int = 0,
-                 inter_size: int = 0,
-                 int4_mode_gptq: int = 0):
+                 inter_size: int = 0):
         assert(head_num % tensor_para_size == 0)
 
-        if int8_mode == 1:
+        if int8_mode in [1, 4]:
             torch_infer_dtype = str_type_map[inference_data_type]
             assert torch_infer_dtype == torch.float16 or torch_infer_dtype == torch.bfloat16, "Weight only quant only supported for infer type fp16 or bf16."
             quant = torch.ops.fastertransformer.symmetric_quantize_last_axis_of_batched_matrix
             self.weight_transpose_calibrate_quantize = lambda x: quant(x, torch.int8)
-        elif int8_mode == 3:
+        elif int8_mode in [3, 5]:
             torch_infer_dtype = str_type_map[inference_data_type]
             assert torch_infer_dtype == torch.float16 or torch_infer_dtype == torch.bfloat16, "Weight only quant only supported for infer type fp16 or bf16."
             quant = torch.ops.fastertransformer.symmetric_quantize_last_axis_of_batched_matrix
@@ -87,7 +86,6 @@ class GPTWeights:
         self.local_inter_size = local_inter_size
 
         self.int8_mode = int8_mode
-        self.int4_mode_gptq = int4_mode_gptq
         self.share_embed = False
 
         if isinstance(weights_data_type, str):
@@ -113,19 +111,21 @@ class GPTWeights:
             self.inference_data_type])] * layer_num)   # self_layernorm_gamma
         self.w.extend([torch.zeros(global_hidden_units, dtype=str_type_map[
             self.inference_data_type])] * layer_num)   # self_layernorm_beta
-        if self.int4_mode_gptq == 0:
-            self.w.extend([torch.zeros(global_hidden_units, local_hidden_units * 3,
-                      dtype=str_type_map[self.inference_data_type])] * layer_num)   # self_kernel
-        else:
+        
+        if self.int8_mode == 5:
             self.w.extend([torch.zeros(global_hidden_units, int(local_hidden_units * 3 / 2),
                       dtype=str_type_map[self.inference_data_type])] * layer_num)   # self_kernel
+        else:
+            self.w.extend([torch.zeros(global_hidden_units, local_hidden_units * 3,
+                      dtype=str_type_map[self.inference_data_type])] * layer_num)   # self_kernel
+
         self.w.extend([torch.zeros(local_hidden_units * 3, dtype=str_type_map[self.inference_data_type])]
                       * layer_num)   # self_bias
-        if self.int4_mode_gptq == 0:
-            self.w.extend([torch.zeros(local_hidden_units, global_hidden_units, dtype=str_type_map[
+        if self.int8_mode == 5:
+            self.w.extend([torch.zeros(local_hidden_units, int(global_hidden_units / 2), dtype=str_type_map[
                 self.inference_data_type])] * layer_num)   # self_output_kernel
         else:
-            self.w.extend([torch.zeros(local_hidden_units, int(global_hidden_units / 2), dtype=str_type_map[
+            self.w.extend([torch.zeros(local_hidden_units, global_hidden_units, dtype=str_type_map[
                 self.inference_data_type])] * layer_num)   # self_output_kernel
         self.w.extend([torch.zeros(global_hidden_units, dtype=str_type_map[
             self.inference_data_type])] * layer_num)   # self_output_bias
@@ -133,19 +133,19 @@ class GPTWeights:
             self.inference_data_type])] * layer_num)   # ffn_layernorm_gamma
         self.w.extend([torch.zeros(global_hidden_units, dtype=str_type_map[
             self.inference_data_type])] * layer_num)   # ffn_layernorm_beta
-        if self.int4_mode_gptq == 0:
-            self.w.extend([torch.zeros(global_hidden_units, local_inter_size,
+        if self.int8_mode == 5:
+            self.w.extend([torch.zeros(global_hidden_units, int(local_inter_size / 2),
                       dtype=str_type_map[self.inference_data_type])] * layer_num)   # ffn_kernel1
         else:
-            self.w.extend([torch.zeros(global_hidden_units, int(local_inter_size / 2),
+            self.w.extend([torch.zeros(global_hidden_units, local_inter_size,
                       dtype=str_type_map[self.inference_data_type])] * layer_num)   # ffn_kernel1
         self.w.extend([torch.zeros(local_inter_size, dtype=str_type_map[
             self.inference_data_type])] * layer_num)   # ffn_bias1
-        if self.int4_mode_gptq == 0:
-            self.w.extend([torch.zeros(local_inter_size, global_hidden_units,
+        if self.int8_mode == 5:
+            self.w.extend([torch.zeros(local_inter_size, int(global_hidden_units / 2),
                       dtype=str_type_map[self.inference_data_type])] * layer_num)   # ffn_kernel2
         else:
-            self.w.extend([torch.zeros(local_inter_size, int(global_hidden_units / 2),
+            self.w.extend([torch.zeros(local_inter_size, global_hidden_units,
                       dtype=str_type_map[self.inference_data_type])] * layer_num)   # ffn_kernel2
         self.w.extend([torch.zeros(global_hidden_units, dtype=str_type_map[
             self.inference_data_type])] * layer_num)   # ffn_bias2
@@ -202,7 +202,7 @@ class GPTWeights:
         # Initialization
         self._map(lambda w: torch.nn.init.normal_(w, mean=0., std=1.))
 
-        if (self.int8_mode == 1):
+        if self.int8_mode in [1, 4]:
             self.int8_w.extend([torch.zeros(global_hidden_units, local_hidden_units *
                                3, dtype=torch.int8)] * layer_num)   # self_int8_kernel
             self.scale.extend([torch.zeros(local_hidden_units * 3, dtype=torch.float)] * layer_num)   # self_scale
@@ -230,7 +230,7 @@ class GPTWeights:
                 self.int8_w.extend([torch.zeros(local_adapter_inter_size, global_hidden_units,
                                    dtype=torch.int8)] * layer_num)   # adaptor2_int8_kernel2
                 self.scale.extend([torch.zeros(global_hidden_units, dtype=torch.float)] * layer_num)   # adaptor2_scale2
-        if (self.int8_mode == 3):
+        if self.int8_mode in [3, 5]:
             self.int8_w.extend([torch.zeros(global_hidden_units, int(local_hidden_units *
                                3 / 2), dtype=torch.int8)] * layer_num)   # self_int8_kernel
             self.scale.extend([torch.zeros(local_hidden_units * 3, dtype=torch.float)] * layer_num)   # self_scale
@@ -321,7 +321,7 @@ class GPTWeights:
 
         def load_to_torch(file_path: str, is_load: bool, is_int8_weight: bool = False, is_scale: bool = False, is_layer_norm: bool = False):
             inference_data_type = self.inference_data_type
-            if self.int4_mode_gptq and is_int8_weight:
+            if self.int8_mode in [4, 5] and is_int8_weight:
                 load_data_type = np.int8
                 inference_data_type = "int8"
             elif is_scale:
@@ -337,7 +337,7 @@ class GPTWeights:
             else:
                 return torch.empty(0).to(str_type_map[self.inference_data_type])
 
-        if self.int8_mode and self.int4_mode_gptq:
+        if self.int8_mode in [4, 5]:
             # load scale
             for i in range(self.layer_num):
                 self.scale[i + 0 * self.layer_num] = load_to_torch(f"{ckpt_path}/model.layers.{i}.attention.query_key_value.scale.{tp_rank}.bin", is_load(i), False, False, True)
@@ -512,72 +512,99 @@ class GPTWeights:
 
         # transpose calibrate quantize the kernel
         layer_num = self.layer_num
-        if self.int8_mode != 0:
-            if self.int4_mode_gptq == 0:
-                for i in range(layer_num):
-                    self.int8_w[i + 0 * layer_num], self.scale[i + 0 *
-                                                            layer_num] = self.weight_transpose_calibrate_quantize(self.w[2 * layer_num + i])
-                    self.int8_w[i + 1 * layer_num], self.scale[i + 1 *
-                                                            layer_num] = self.weight_transpose_calibrate_quantize(self.w[4 * layer_num + i])
-                    self.int8_w[i + 2 * layer_num], self.scale[i + 2 *
-                                                            layer_num] = self.weight_transpose_calibrate_quantize(self.w[8 * layer_num + i])
-                    self.int8_w[i + 3 * layer_num], self.scale[i + 3 *
-                                                            layer_num] = self.weight_transpose_calibrate_quantize(self.w[10 * layer_num + i])
-                    # import ipdb; ipdb.set_trace()
 
-                    # We clear the original weights since they are no longer needed
-                    if self.int8_mode == 1 or self.int8_mode == 3:
-                        self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                        self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                        self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                        self.w[10 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+        if self.int8_mode in [1, 3]:
+            for i in range(layer_num):
+                self.int8_w[i + 0 * layer_num], self.scale[i + 0 *
+                                                        layer_num] = self.weight_transpose_calibrate_quantize(self.w[2 * layer_num + i])
+                self.int8_w[i + 1 * layer_num], self.scale[i + 1 *
+                                                        layer_num] = self.weight_transpose_calibrate_quantize(self.w[4 * layer_num + i])
+                self.int8_w[i + 2 * layer_num], self.scale[i + 2 *
+                                                        layer_num] = self.weight_transpose_calibrate_quantize(self.w[8 * layer_num + i])
+                self.int8_w[i + 3 * layer_num], self.scale[i + 3 *
+                                                        layer_num] = self.weight_transpose_calibrate_quantize(self.w[10 * layer_num + i])
+                # import ipdb; ipdb.set_trace()
 
-                    if self.has_adapters:
-                        self.int8_w[i + 4 * layer_num], self.scale[i + 4 * layer_num] = self.weight_transpose_calibrate_quantize(
-                            self.w[12 * layer_num + i + self.adapter_offset])
-                        self.int8_w[i + 5 * layer_num], self.scale[i + 5 * layer_num] = self.weight_transpose_calibrate_quantize(
-                            self.w[14 * layer_num + i + self.adapter_offset])
-                        self.int8_w[i + 6 * layer_num], self.scale[i + 6 * layer_num] = self.weight_transpose_calibrate_quantize(
-                            self.w[16 * layer_num + i + self.adapter_offset])
-                        self.int8_w[i + 7 * layer_num], self.scale[i + 7 * layer_num] = self.weight_transpose_calibrate_quantize(
-                            self.w[18 * layer_num + i + self.adapter_offset])
-
-                        # Similar to above:
-                        if self.int8_mode == 1 or self.int8_mode == 3:
-                            self.w[12 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                            self.w[14 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                            self.w[16 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                            self.w[18 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-            else:
-                for i in range(layer_num):
-                    # quantize compatible
-                    quant_preprocess = torch.ops.fastertransformer.symmetric_quantize_last_axis_of_batched_matrix_preprocess
-                    self.int8_w[i + 0 * layer_num] = quant_preprocess(self.w[2 * layer_num + i], torch.quint4x2)
-                    self.int8_w[i + 1 * layer_num] = quant_preprocess(self.w[4 * layer_num + i], torch.quint4x2)
-                    self.int8_w[i + 2 * layer_num] = quant_preprocess(self.w[8 * layer_num + i], torch.quint4x2)
-                    self.int8_w[i + 3 * layer_num] = quant_preprocess(self.w[10 * layer_num + i], torch.quint4x2)
-
-                    # import ipdb; ipdb.set_trace()
-
+                # We clear the original weights since they are no longer needed
+                if self.int8_mode == 1 or self.int8_mode == 3:
                     self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
                     self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
                     self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
                     self.w[10 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
 
-                    if self.has_adapters:
-                        self.int8_w[i + 4 * layer_num] = self.w[12 * layer_num + i + self.adapter_offset]
-                        self.int8_w[i + 5 * layer_num] = self.w[14 * layer_num + i + self.adapter_offset]
-                        self.int8_w[i + 6 * layer_num] = self.w[16 * layer_num + i + self.adapter_offset]
-                        self.int8_w[i + 7 * layer_num] = self.w[18 * layer_num + i + self.adapter_offset]
+                if self.has_adapters:
+                    self.int8_w[i + 4 * layer_num], self.scale[i + 4 * layer_num] = self.weight_transpose_calibrate_quantize(
+                        self.w[12 * layer_num + i + self.adapter_offset])
+                    self.int8_w[i + 5 * layer_num], self.scale[i + 5 * layer_num] = self.weight_transpose_calibrate_quantize(
+                        self.w[14 * layer_num + i + self.adapter_offset])
+                    self.int8_w[i + 6 * layer_num], self.scale[i + 6 * layer_num] = self.weight_transpose_calibrate_quantize(
+                        self.w[16 * layer_num + i + self.adapter_offset])
+                    self.int8_w[i + 7 * layer_num], self.scale[i + 7 * layer_num] = self.weight_transpose_calibrate_quantize(
+                        self.w[18 * layer_num + i + self.adapter_offset])
 
-                        # Similar to above:
-                        if self.int8_mode == 3:
-                            self.w[12 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                            self.w[14 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                            self.w[16 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                            self.w[18 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
-        # import ipdb; ipdb.set_trace()
-        # self.int8_w = torch.load("int8_w_ptq")
+                    # Similar to above:
+                    if self.int8_mode == 1 or self.int8_mode == 3:
+                        self.w[12 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[14 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[16 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[18 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+        elif self.int8_mode == 4:
+            for i in range(layer_num):
+                # quantize compatible
+                quant_preprocess = torch.ops.fastertransformer.symmetric_quantize_last_axis_of_batched_matrix_preprocess
+                self.int8_w[i + 0 * layer_num] = quant_preprocess(self.w[2 * layer_num + i], torch.int8)
+                self.int8_w[i + 1 * layer_num] = quant_preprocess(self.w[4 * layer_num + i], torch.int8)
+                self.int8_w[i + 2 * layer_num] = quant_preprocess(self.w[8 * layer_num + i], torch.int8)
+                self.int8_w[i + 3 * layer_num] = quant_preprocess(self.w[10 * layer_num + i], torch.int8)
+
+                # import ipdb; ipdb.set_trace()
+
+                # We clear the original weights since they are no longer needed
+                if self.int8_mode == 1:
+                    self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                    self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                    self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                    self.w[10 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                # import ipdb; ipdb.set_trace()
+
+                if self.has_adapters:
+                    self.int8_w[i + 4 * layer_num] = self.w[12 * layer_num + i + self.adapter_offset]
+                    self.int8_w[i + 5 * layer_num] = self.w[14 * layer_num + i + self.adapter_offset]
+                    self.int8_w[i + 6 * layer_num] = self.w[16 * layer_num + i + self.adapter_offset]
+                    self.int8_w[i + 7 * layer_num] = self.w[18 * layer_num + i + self.adapter_offset]
+
+                    # Similar to above:
+                    if self.int8_mode == 1:
+                        self.w[12 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[14 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[16 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                        self.w[18 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+        elif self.int8_mode == 5:
+            for i in range(layer_num):
+                # quantize compatible
+                quant_preprocess = torch.ops.fastertransformer.symmetric_quantize_last_axis_of_batched_matrix_preprocess
+                self.int8_w[i + 0 * layer_num] = quant_preprocess(self.w[2 * layer_num + i], torch.quint4x2)
+                self.int8_w[i + 1 * layer_num] = quant_preprocess(self.w[4 * layer_num + i], torch.quint4x2)
+                self.int8_w[i + 2 * layer_num] = quant_preprocess(self.w[8 * layer_num + i], torch.quint4x2)
+                self.int8_w[i + 3 * layer_num] = quant_preprocess(self.w[10 * layer_num + i], torch.quint4x2)
+
+                # import ipdb; ipdb.set_trace()
+
+                self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                self.w[10 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                if self.has_adapters:
+                    self.int8_w[i + 4 * layer_num] = self.w[12 * layer_num + i + self.adapter_offset]
+                    self.int8_w[i + 5 * layer_num] = self.w[14 * layer_num + i + self.adapter_offset]
+                    self.int8_w[i + 6 * layer_num] = self.w[16 * layer_num + i + self.adapter_offset]
+                    self.int8_w[i + 7 * layer_num] = self.w[18 * layer_num + i + self.adapter_offset]
+
+                    self.w[12 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                    self.w[14 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                    self.w[16 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                    self.w[18 * layer_num + i + self.adapter_offset] = torch.empty(0).to(str_type_map[self.inference_data_type])
+
         return True
 
 
@@ -607,7 +634,6 @@ class GPT(nn.Module):
                  use_attention_linear_bias: bool = False,
                  int8_mode: int = 0,
                  weights_data_type: typing.Union[str, np.dtype] = np.float32,
-                 int4_mode_gptq: int = 0,
                  shared_contexts_ratio: float = 1.0):
         super().__init__()
         self.head_num = head_num
@@ -639,7 +665,6 @@ class GPT(nn.Module):
         self.use_sparse_gemm = False
         self.build_model = False
         self.int8_mode = int8_mode
-        self.int4_mode_gptq = int4_mode_gptq
         self.weights_data_type = weights_data_type
         self.shared_contexts_ratio = shared_contexts_ratio
 
@@ -663,8 +688,7 @@ class GPT(nn.Module):
                                   has_adapters=self.has_adapters,
                                   adapter_inter_size=self.adapter_inter_size,
                                   int8_mode=int8_mode,
-                                  inter_size=inter_size,
-                                  int4_mode_gptq=int4_mode_gptq)
+                                  inter_size=inter_size)
 
         # Prepare for tensor/pipeline parallel
         try:

@@ -195,7 +195,7 @@ void FfnLayer<T>::forward(TensorMap* output_tensors, TensorMap* input_tensors, c
 #endif
     }
     else {
-        if (int8_mode_ == 1) {
+        if (int8_mode_ == 1 || int8_mode_ == 4) {
             FT_CHECK_WITH_INFO(weight_only_int8_fc_runner_.get() != NULL, "weight only runner was not initialized.");
             FT_CHECK(ffn_weights->intermediate_weight.int8_kernel != NULL
                      && ffn_weights->intermediate_weight.weight_only_quant_scale != NULL);
@@ -248,7 +248,7 @@ void FfnLayer<T>::forward(TensorMap* output_tensors, TensorMap* input_tensors, c
                 }
             }
         }
-        if (int8_mode_ == 3) {
+        if (int8_mode_ == 3 || int8_mode_ == 5) {
             FT_CHECK_WITH_INFO(weight_only_int4_fc_runner_.get() != NULL, "weight only runner was not initialized.");
             FT_CHECK(ffn_weights->intermediate_weight.int8_kernel != NULL
                      && ffn_weights->intermediate_weight.weight_only_quant_scale != NULL);
@@ -344,7 +344,7 @@ void FfnLayer<T>::forward(TensorMap* output_tensors, TensorMap* input_tensors, c
 
     POP_RANGE;
 
-    if ((int8_mode_ != 1 && int8_mode_ != 3) || ia3_tasks != nullptr || use_gated_activation) {
+    if ((int8_mode_ != 1 && int8_mode_ != 3 && int8_mode_ != 4 && int8_mode_ != 5) || ia3_tasks != nullptr || use_gated_activation) {
         // if int8_mode == 1 && ia3_tasks == nullptr && we don't use gated activations, we use cutlass
         // to fuse GEMM + bias + activation, so we skip the activation function here. In all
         // other cases, we must apply the activation function separately.
@@ -380,7 +380,7 @@ void FfnLayer<T>::forward(TensorMap* output_tensors, TensorMap* input_tensors, c
 #endif
     }
     else {
-        if (int8_mode_ == 1) {
+        if (int8_mode_ == 1 || int8_mode_ == 4) {
             FT_CHECK_WITH_INFO(weight_only_int8_fc_runner_.get() != NULL, "weight only runner was not initialized.");
             FT_CHECK(ffn_weights->output_weight.int8_kernel != NULL
                      && ffn_weights->output_weight.weight_only_quant_scale != NULL);
@@ -395,7 +395,7 @@ void FfnLayer<T>::forward(TensorMap* output_tensors, TensorMap* input_tensors, c
                                               mixed_gemm_ws_bytes_,
                                               stream_);
         }
-        else if (int8_mode_ == 3) {
+        else if (int8_mode_ == 3 || int8_mode_ == 5) {
             FT_CHECK_WITH_INFO(weight_only_int4_fc_runner_.get() != NULL, "weight only runner was not initialized.");
             FT_CHECK(ffn_weights->output_weight.int8_kernel != NULL
                      && ffn_weights->output_weight.weight_only_quant_scale != NULL);
@@ -477,12 +477,12 @@ FfnLayer<T>::FfnLayer(size_t           max_batch_size,
     if (int8_mode_ == 0) {
         moe_fc_runner_ = std::make_shared<CutlassMoeFCRunner<T, T>>();
     }
-    else if (int8_mode_ == 1) {
+    else if (int8_mode_ == 1 || int8_mode_ == 4) {
         FT_CHECK_WITH_INFO(!(std::is_same<T, float>::value), "Weight only quant not supported for fp32.");
         moe_int8_weight_only_fc_runner_ = std::make_shared<CutlassMoeFCRunner<T, uint8_t>>();
         weight_only_int8_fc_runner_     = std::make_shared<CutlassFpAIntBGemmRunner<T, uint8_t>>();
     }
-    else if (int8_mode_ == 3) {
+    else if (int8_mode_ == 3 || int8_mode_ == 5) {
         FT_CHECK_WITH_INFO(!(std::is_same<T, float>::value), "Weight only quant not supported for fp32.");
         moe_int8_weight_only_fc_runner_ = std::make_shared<CutlassMoeFCRunner<T, uint8_t>>();
         weight_only_int4_fc_runner_     = std::make_shared<CutlassFpAIntBGemmRunner<T, cutlass::uint4b_t>>();
@@ -558,7 +558,7 @@ void FfnLayer<T>::allocateBuffer(size_t token_num, int moe_k, bool use_moe)
             inter_buf_2_ = (T*)allocator_->reMalloc(inter_buf_2_, sizeof(T) * token_num * max_inter_size_, false);
         }
 
-        if (int8_mode_ == 1) {
+        if (int8_mode_ == 1 || int8_mode_ == 4) {
             FT_CHECK_WITH_INFO(weight_only_int8_fc_runner_.get() != NULL, "weight only runner was not initialized.");
             // We use max_size for n and k since we reuse buffers for both FCs and want to allocate the max
             // possible memory that would be required by any of the individual gemms.
@@ -566,7 +566,7 @@ void FfnLayer<T>::allocateBuffer(size_t token_num, int moe_k, bool use_moe)
             mixed_gemm_ws_bytes_  = weight_only_int8_fc_runner_->getWorkspaceSize(token_num, max_size, max_size);
             mixed_gemm_workspace_ = (char*)allocator_->reMalloc(mixed_gemm_workspace_, mixed_gemm_ws_bytes_, false);
         }
-        else if (int8_mode_ == 3) {
+        else if (int8_mode_ == 3 || int8_mode_ == 5) {
             FT_CHECK_WITH_INFO(weight_only_int4_fc_runner_.get() != NULL, "weight only runner was not initialized.");
             // We use max_size for n and k since we reuse buffers for both FCs and want to allocate the max
             // possible memory that would be required by any of the individual gemms.
@@ -642,7 +642,7 @@ void FfnLayer<T>::genericActivation(int          m,
     switch (getActivationType()) {
         case ActivationType::Gelu:
         case ActivationType::GeGLU:
-            if (inter_buf_2_ == nullptr && (int8_mode_ <= 1 || int8_mode_ == 2)) {
+            if (inter_buf_2_ == nullptr && (int8_mode_ <= 1 || int8_mode_ == 3 || int8_mode_ == 4 || int8_mode_ == 5)) {
                 invokeAddBiasGeluV2(
                     inter_buf_, bias1, ia3_tasks, ia3_weights, padding_offset, seq_len, m, inter_size_, stream_);
             }

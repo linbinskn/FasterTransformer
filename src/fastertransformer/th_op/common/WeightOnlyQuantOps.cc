@@ -141,7 +141,11 @@ symmetric_quantize_helper_preprocess(Tensor weight, torch::ScalarType quant_type
 {
     const size_t num_experts = weight.dim() == 2 ? 1 : weight.size(0);
     const size_t num_rows    = weight.size(-2);
-    const size_t num_cols    = (weight.size(-1) * 2);
+    size_t num_cols    = weight.size(-1);
+    if (quant_type == at::ScalarType::QUInt4x2) {
+        num_cols = weight.size(-1) * 2;
+    }
+
     ft::QuantType ft_quant_type = get_ft_quant_type(quant_type);
     Tensor processed_quantized_weight = torch::empty_like(weight);
     int8_t* unprocessed_quantized_weight_ptr = get_ptr<int8_t>(weight);

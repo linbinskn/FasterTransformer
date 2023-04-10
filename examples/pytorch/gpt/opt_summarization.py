@@ -55,12 +55,14 @@ def main():
         help='Data type of FT checkpoint weights',
     )
     parser.add_argument(
-        '--int8_mode', type=int, default=0, choices=[0, 1, 2, 3],
+        '--int8_mode', type=int, default=0, choices=[0, 1, 2, 3, 4, 5],
         help='The level of quantization to perform.'
              ' 0: No quantization. All computation in data_type'
              ' 1: Quantize weights to int8, all compute occurs in fp16/bf16. Not supported when data_type is fp32'
              ' 2: A8W8, seems not supported currently'
-             ' 3: Quantize weights to int4, all compute occurs in fp16/bf16. Not supported when data_type is fp32')
+             ' 3: Quantize weights to int4, all compute occurs in fp16/bf16. Not supported when data_type is fp32'
+             ' 4: Run int8 weight only quantization model by loading int8 checkpoint'
+             ' 5: Run int4 weight only quantization model by loading int4 checkpoint')
     parser.add_argument(
         '--use_gpt_decoder_ops', action='store_true',
         help='Use separate decoder FT operators instead of end-to-end model op.')
@@ -125,6 +127,8 @@ def main():
     pipeline_para_size = args.pipeline_para_size
     lib_path = args.lib_path
     ckpt_path = os.path.join(ft_model_location, f'{tensor_para_size}-gpu')
+    if args.int8_mode in [4, 5]:
+        ckpt_path += "-gptq"
 
     print(f"top_k: {top_k}")
     print(f"top_p: {top_p}")
