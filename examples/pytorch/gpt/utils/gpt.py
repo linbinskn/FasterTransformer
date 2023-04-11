@@ -560,11 +560,10 @@ class GPTWeights:
                 # import ipdb; ipdb.set_trace()
 
                 # We clear the original weights since they are no longer needed
-                if self.int8_mode == 1:
-                    self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                    self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                    self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
-                    self.w[10 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                self.w[2 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                self.w[4 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                self.w[8 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
+                self.w[10 * layer_num + i] = torch.empty(0).to(str_type_map[self.inference_data_type])
                 # import ipdb; ipdb.set_trace()
 
                 if self.has_adapters:
